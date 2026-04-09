@@ -14,10 +14,15 @@ import {
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { formatGuestFullName } from '@/lib/guest-name'
-import { deleteStickyNote, insertStickyNote, updateStickyNote } from '@/lib/pms-db'
+import {
+  insertStickyNote,
+  markStickyNoteCompleted,
+  softDeleteStickyNoteFromHome,
+  updateStickyNote,
+} from '@/lib/pms-db'
 import { stickyNotePreview, stickyNoteSurfaceStyle } from '@/lib/sticky-note-ui'
 import { cn } from '@/lib/utils'
-import type { Guest, Room, StickyNote } from '@/types/models'
+import type { Guest, PublicUser, Room, StickyNote } from '@/types/models'
 
 function groupRoomsByCategoryOrdered(rooms: Room[]): { category: string; rooms: Room[] }[] {
   const map = new Map<string, Room[]>()
@@ -77,10 +82,18 @@ type StickyNotesBoardProps = {
   setNotes: Dispatch<SetStateAction<StickyNote[]>>
   rooms: Room[]
   guests: Guest[]
+  currentUser: PublicUser
   loadError?: string
 }
 
-export function StickyNotesBoard({ notes, setNotes, rooms, guests, loadError }: StickyNotesBoardProps) {
+export function StickyNotesBoard({
+  notes,
+  setNotes,
+  rooms,
+  guests,
+  currentUser,
+  loadError,
+}: StickyNotesBoardProps) {
   const viewportRef = useRef<HTMLDivElement>(null)
   const [carouselPage, setCarouselPage] = useState(0)
   const [isMobile, setIsMobile] = useState(() => window.matchMedia(MOBILE_BREAKPOINT_QUERY).matches)
@@ -217,6 +230,8 @@ export function StickyNotesBoard({ notes, setNotes, rooms, guests, loadError }: 
           roomId,
           guestId,
           deadlineAt: deadlineIso,
+          createdByUserId: currentUser.id,
+          createdByName: currentUser.username,
         })
         setNotes((prev) => [...prev, created].sort((a, b) => {
           const da = a.deadlineAt ? new Date(a.deadlineAt).getTime() : Number.POSITIVE_INFINITY
@@ -238,11 +253,32 @@ export function StickyNotesBoard({ notes, setNotes, rooms, guests, loadError }: 
     setSaving(true)
     setFormError('')
     try {
-      await deleteStickyNote(editing.id)
+      await softDeleteStickyNoteFromHome(editing.id, {
+        userId: currentUser.id,
+        userName: currentUser.username,
+      })
       setNotes((prev) => prev.filter((n) => n.id !== editing.id))
       setDialogOpen(false)
     } catch (e) {
       setFormError(e instanceof Error ? e.message : 'Не удалось удалить.')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  async function handleComplete() {
+    if (!editing) return
+    setSaving(true)
+    setFormError('')
+    try {
+      await markStickyNoteCompleted(editing.id, {
+        userId: currentUser.id,
+        userName: currentUser.username,
+      })
+      setNotes((prev) => prev.filter((n) => n.id !== editing.id))
+      setDialogOpen(false)
+    } catch (e) {
+      setFormError(e instanceof Error ? e.message : 'Не удалось отметить заметку как выполненную.')
     } finally {
       setSaving(false)
     }
@@ -305,6 +341,7 @@ export function StickyNotesBoard({ notes, setNotes, rooms, guests, loadError }: 
             const room = roomIdForDisplay ? rooms.find((r) => r.id === roomIdForDisplay) : undefined
             const dl = deadlineLabel(note.deadlineAt)
             const surface = stickyNoteSurfaceStyle(note.deadlineAt)
+            const author = note.createdByName?.trim() || 'Не указан'
             return (
               <button
                 key={note.id}
@@ -323,6 +360,7 @@ export function StickyNotesBoard({ notes, setNotes, rooms, guests, loadError }: 
                     {room ? <p className="truncate">№ {room.name}</p> : null}
                     {guest ? <p className="truncate">{formatGuestFullName(guest)}</p> : null}
                     {dl ? <p className="tabular-nums">до {dl}</p> : null}
+                    <p className="truncate">автор: {author}</p>
                   </div>
                 )}
               </button>
@@ -352,6 +390,12 @@ export function StickyNotesBoard({ notes, setNotes, rooms, guests, loadError }: 
               Текст виден целиком здесь. На главной — только начало. Дедлайн окрашивает стикер (ближе к сроку —
               заметнее).
             </DialogDescription>
+            <p className="text-xs text-muted-foreground">
+              Автор:{' '}
+              <span className="font-medium text-foreground">
+                {editing?.createdByName?.trim() || currentUser.username}
+              </span>
+            </p>
           </DialogHeader>
 
           <div className="grid max-h-[min(70vh,32rem)] gap-4 overflow-y-auto py-1 pr-1">
@@ -433,17 +477,28 @@ export function StickyNotesBoard({ notes, setNotes, rooms, guests, loadError }: 
           </div>
 
           <div className="mt-4 flex flex-col gap-2 border-t border-border pt-4 sm:flex-row sm:justify-between">
-            <div>
+            <div className="flex flex-wrap gap-2">
               {editing ? (
-                <Button
-                  type="button"
-                  variant="outline"
-                  className="text-red-600 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-950/40"
-                  disabled={saving}
-                  onClick={() => void handleDelete()}
-                >
-                  Удалить
-                </Button>
+                <>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="border-emerald-300 text-emerald-700 hover:bg-emerald-50 dark:border-emerald-900 dark:text-emerald-300 dark:hover:bg-emerald-950/40"
+                    disabled={saving}
+                    onClick={() => void handleComplete()}
+                  >
+                    Выполнено
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="text-red-600 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-950/40"
+                    disabled={saving}
+                    onClick={() => void handleDelete()}
+                  >
+                    Удалить
+                  </Button>
+                </>
               ) : null}
             </div>
             <div className="flex flex-wrap gap-2">

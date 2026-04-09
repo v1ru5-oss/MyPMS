@@ -1334,6 +1334,7 @@ function HomePage() {
                   setNotes={setStickyNotes}
                   rooms={rooms}
                   guests={guests}
+                  currentUser={user!}
                   loadError={stickyNotesLoadError}
                 />
               ) : null}

@@ -5,6 +5,16 @@ export interface StickyNote {
   roomId?: string | null
   guestId?: string | null
   deadlineAt?: string | null
+  createdByUserId?: string | null
+  createdByName?: string | null
+  isCompleted?: boolean
+  completedAt?: string | null
+  completedByUserId?: string | null
+  completedByName?: string | null
+  /** С главной: мягкое удаление; строка хранится до автоочистки */
+  deletedAt?: string | null
+  deletedByUserId?: string | null
+  deletedByName?: string | null
   createdAt: string
   updatedAt: string
 }

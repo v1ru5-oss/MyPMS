@@ -77,6 +77,15 @@ type NoteRow = {
   room_id: string | null
   guest_id: string | null
   deadline_at: string | null
+  created_by_user_id: string | null
+  created_by_name: string | null
+  is_completed: boolean
+  completed_at: string | null
+  completed_by_user_id: string | null
+  completed_by_name: string | null
+  deleted_at: string | null
+  deleted_by_user_id: string | null
+  deleted_by_name: string | null
   created_at: string
   updated_at: string
 }
@@ -88,6 +97,15 @@ function noteRowToModel(row: NoteRow): StickyNote {
     roomId: row.room_id,
     guestId: row.guest_id,
     deadlineAt: row.deadline_at,
+    createdByUserId: row.created_by_user_id,
+    createdByName: row.created_by_name,
+    isCompleted: row.is_completed,
+    completedAt: row.completed_at,
+    completedByUserId: row.completed_by_user_id,
+    completedByName: row.completed_by_name,
+    deletedAt: row.deleted_at,
+    deletedByUserId: row.deleted_by_user_id,
+    deletedByName: row.deleted_by_name,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   }
@@ -314,7 +332,15 @@ export function subscribeRoomsRealtime(onUpdate: () => void): () => void {
 
 export async function fetchStickyNotes(): Promise<StickyNote[]> {
   const sb = getSupabase()
-  const { data, error } = await sb.from('notes').select('*')
+  const { error: cleanupError } = await sb.rpc('cleanup_completed_notes')
+  if (cleanupError && import.meta.env.DEV) {
+    console.warn('[fetchStickyNotes] cleanup_completed_notes:', cleanupError.message)
+  }
+  const { data, error } = await sb
+    .from('notes')
+    .select('*')
+    .eq('is_completed', false)
+    .is('deleted_at', null)
   if (error) throw error
   const list = (data as NoteRow[]).map(noteRowToModel)
   return list.sort((a, b) => {
@@ -325,11 +351,44 @@ export async function fetchStickyNotes(): Promise<StickyNote[]> {
   })
 }
 
+export async function fetchCompletedStickyNotes(): Promise<StickyNote[]> {
+  const sb = getSupabase()
+  const { error: cleanupError } = await sb.rpc('cleanup_completed_notes')
+  if (cleanupError && import.meta.env.DEV) {
+    console.warn('[fetchCompletedStickyNotes] cleanup_completed_notes:', cleanupError.message)
+  }
+  const { data, error } = await sb
+    .from('notes')
+    .select('*')
+    .eq('is_completed', true)
+    .is('deleted_at', null)
+    .order('completed_at', { ascending: false })
+  if (error) throw error
+  return (data as NoteRow[]).map(noteRowToModel)
+}
+
+export async function fetchPendingDeletionStickyNotes(): Promise<StickyNote[]> {
+  const sb = getSupabase()
+  const { error: cleanupError } = await sb.rpc('cleanup_completed_notes')
+  if (cleanupError && import.meta.env.DEV) {
+    console.warn('[fetchPendingDeletionStickyNotes] cleanup_completed_notes:', cleanupError.message)
+  }
+  const { data, error } = await sb
+    .from('notes')
+    .select('*')
+    .not('deleted_at', 'is', null)
+    .order('deleted_at', { ascending: false })
+  if (error) throw error
+  return (data as NoteRow[]).map(noteRowToModel)
+}
+
 export type StickyNoteInput = {
   body: string
   roomId?: string | null
   guestId?: string | null
   deadlineAt?: string | null
+  createdByUserId?: string | null
+  createdByName?: string | null
 }
 
 export async function insertStickyNote(input: StickyNoteInput): Promise<StickyNote> {
@@ -341,6 +400,8 @@ export async function insertStickyNote(input: StickyNoteInput): Promise<StickyNo
     room_id: input.roomId?.trim() || null,
     guest_id: input.guestId?.trim() || null,
     deadline_at: input.deadlineAt?.trim() || null,
+    created_by_user_id: input.createdByUserId?.trim() || null,
+    created_by_name: input.createdByName?.trim() || null,
   }
   const { data, error } = await sb.from('notes').insert(row).select('*').single()
   if (error) throw error
@@ -359,6 +420,10 @@ export async function updateStickyNote(
       room_id: input.roomId?.trim() || null,
       guest_id: input.guestId?.trim() || null,
       deadline_at: input.deadlineAt?.trim() || null,
+      is_completed: false,
+      completed_at: null,
+      completed_by_user_id: null,
+      completed_by_name: null,
     })
     .eq('id', id)
     .select('*')
@@ -367,7 +432,64 @@ export async function updateStickyNote(
   return noteRowToModel(data as NoteRow)
 }
 
-export async function deleteStickyNote(id: string): Promise<void> {
+/** Только текст: не трогает выполнение, удаление, номер, гостя и дедлайн. */
+export async function updateStickyNoteBody(id: string, body: string): Promise<StickyNote> {
+  const sb = getSupabase()
+  const { data, error } = await sb
+    .from('notes')
+    .update({ body: body.trim() })
+    .eq('id', id)
+    .select('*')
+    .single()
+  if (error) throw error
+  return noteRowToModel(data as NoteRow)
+}
+
+export type StickyNoteActor = {
+  userId: string
+  userName: string
+}
+
+export async function markStickyNoteCompleted(
+  id: string,
+  actor: StickyNoteActor,
+): Promise<StickyNote> {
+  const sb = getSupabase()
+  const { data, error } = await sb
+    .from('notes')
+    .update({
+      is_completed: true,
+      completed_at: new Date().toISOString(),
+      completed_by_user_id: actor.userId.trim(),
+      completed_by_name: actor.userName.trim(),
+    })
+    .eq('id', id)
+    .select('*')
+    .single()
+  if (error) throw error
+  return noteRowToModel(data as NoteRow)
+}
+
+/** С главной: мягкое удаление (строка остаётся в БД до автоочистки через 7 дней). */
+export async function softDeleteStickyNoteFromHome(
+  id: string,
+  actor: StickyNoteActor,
+): Promise<void> {
+  const sb = getSupabase()
+  const { error } = await sb
+    .from('notes')
+    .update({
+      deleted_at: new Date().toISOString(),
+      deleted_by_user_id: actor.userId.trim(),
+      deleted_by_name: actor.userName.trim(),
+    })
+    .eq('id', id)
+    .is('deleted_at', null)
+  if (error) throw error
+}
+
+/** Окончательное удаление из БД (страница «Заметки» и истёкшие записи чистит RPC). */
+export async function purgeStickyNote(id: string): Promise<void> {
   const sb = getSupabase()
   const { error } = await sb.from('notes').delete().eq('id', id)
   if (error) throw error

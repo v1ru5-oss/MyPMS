@@ -1,4 +1,5 @@
 import { format, parseISO } from 'date-fns'
+import { FileUser, PlusSquare } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 
@@ -18,7 +19,11 @@ import { isAdminUser, isConciergeUser } from '@/lib/access'
 import { fetchGuests, fetchRooms } from '@/lib/pms-db'
 import type { Guest, Room } from '@/types/models'
 
-export function AppSidebarConciergePanels() {
+type AppSidebarConciergePanelsProps = {
+  compact?: boolean
+}
+
+export function AppSidebarConciergePanels({ compact = false }: AppSidebarConciergePanelsProps) {
   const { user } = useAuth()
   const admin = user ? isAdminUser(user) : false
   const conciergeOps = user ? admin || isConciergeUser(user) : false
@@ -79,7 +84,14 @@ export function AppSidebarConciergePanels() {
         }}
       >
         <DialogTrigger asChild>
-          <Button className="w-full bg-red-600 text-white hover:bg-red-700">Карточка гостя</Button>
+          <Button
+            className={compact ? 'h-10 w-10 p-0 bg-red-600 text-white hover:bg-red-700' : 'w-full gap-2 bg-red-600 text-white hover:bg-red-700'}
+            aria-label="Карточка гостя"
+            title="Карточка гостя"
+          >
+            <FileUser className="h-4 w-4 shrink-0" aria-hidden />
+            {!compact ? 'Карточка гостя' : null}
+          </Button>
         </DialogTrigger>
         <DialogContent>
           <DialogHeader>
@@ -165,11 +177,14 @@ export function AppSidebarConciergePanels() {
 
       <Button
         type="button"
-        className="w-full"
+        className={compact ? 'h-10 w-10 p-0' : 'w-full gap-2'}
         variant="outline"
         onClick={() => navigate({ pathname: '/', search: '?newBooking=1' })}
+        aria-label="Добавить бронь"
+        title="Добавить бронь"
       >
-        Добавить бронь
+        <PlusSquare className="h-4 w-4 shrink-0" aria-hidden />
+        {!compact ? 'Добавить бронь' : null}
       </Button>
     </>
   )

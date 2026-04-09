@@ -28,6 +28,7 @@ export function canAccessPath(pathname: string, user: PublicUser): boolean {
 
   if (pathname === '/' || pathname === '') return true
   if (pathname === '/summary') return admin
+  if (pathname === '/notes') return admin || concierge
   if (pathname === '/guests') return admin || concierge
   if (pathname === '/room-cleaning') return admin || housekeeper
   if (pathname === '/admin') return admin
