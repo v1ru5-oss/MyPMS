@@ -1,73 +1,88 @@
-# React + TypeScript + Vite
+# MyPMS
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+MyPMS is a web application for hotel front desk and operations management.
+The project is built with React, TypeScript, and Vite, with Supabase as the backend.
 
-Currently, two official plugins are available:
+## Features
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+- Guest and booking workflows
+- Room occupancy and cleaning workflows
+- Sticky notes for operations team communication
+- Role-based access (admin, concierge, housekeeper)
 
-## React Compiler
+## Tech Stack
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+- React 19
+- TypeScript
+- Vite
+- Tailwind CSS
+- Supabase (Auth, Database, Edge Functions)
 
-## Expanding the ESLint configuration
+## Requirements
 
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
+- Node.js 20+
+- npm 10+ (or compatible)
+- Supabase project with configured API keys
 
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
+## Local Development
 
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
+1. Install dependencies:
 
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+```bash
+npm install
 ```
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+2. Create environment file:
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
+```bash
+cp .env.example .env.local
+```
 
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+3. Fill required variables in `.env.local`:
+
+```env
+VITE_SUPABASE_URL=https://your-project.supabase.co
+VITE_SUPABASE_ANON_KEY=your_anon_or_publishable_key
+```
+
+4. Start development server:
+
+```bash
+npm run dev
+```
+
+5. Open in browser:
+
+`http://localhost:5173`
+
+## Available Scripts
+
+- `npm run dev` - start local dev server
+- `npm run build` - create production build
+- `npm run preview` - preview production build locally
+- `npm run lint` - run lint checks
+- `npm run migrate:data` - run migration script from `scripts/migrate-data.mjs`
+
+## Production Build
+
+```bash
+npm run build
+npm run preview
+```
+
+## Supabase Notes
+
+- Keep `.env.local` private and never commit secrets.
+- `SUPABASE_SERVICE_ROLE_KEY` is only for migration script usage and should never be exposed to the frontend.
+- For invitation/login flows, configure redirect URL in Supabase Auth settings:
+  - `https://<your-frontend-domain>/login`
+
+## Git Workflow
+
+Push latest changes:
+
+```bash
+git add .
+git commit -m "Your commit message"
+git push
 ```
