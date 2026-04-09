@@ -243,7 +243,7 @@ export default function AdminPage() {
 
   if (!isReady) {
     return (
-      <main className="min-h-screen w-full p-6">
+      <main className="min-h-screen w-full p-4 sm:p-6">
         <div className="mx-auto flex min-h-[50vh] w-full max-w-5xl items-center justify-center">
           <p className="text-muted-foreground">Загрузка…</p>
         </div>
@@ -254,7 +254,7 @@ export default function AdminPage() {
   if (!user) return null
 
   return (
-    <main className="min-h-screen w-full p-6">
+    <main className="min-h-screen w-full p-4 sm:p-6">
       <div className="mx-auto flex w-full max-w-5xl flex-col gap-8">
         <div className="flex flex-wrap items-center justify-end gap-4">
           <Button type="button" variant="outline" onClick={() => void logout()}>

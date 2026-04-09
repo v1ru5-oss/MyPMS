@@ -44,8 +44,9 @@ function deadlineLabel(iso: string | null | undefined): string | null {
   }
 }
 
-/** Всегда 6 позиций в ряду; лишнее — каруселью */
-const SLOTS_PER_PAGE = 6
+const MOBILE_BREAKPOINT_QUERY = '(max-width: 767px)'
+const MOBILE_SLOTS_PER_PAGE = 3
+const DESKTOP_SLOTS_PER_PAGE = 6
 
 type StickyRowCell = StickyNote | 'add' | 'empty'
 
@@ -82,6 +83,7 @@ type StickyNotesBoardProps = {
 export function StickyNotesBoard({ notes, setNotes, rooms, guests, loadError }: StickyNotesBoardProps) {
   const viewportRef = useRef<HTMLDivElement>(null)
   const [carouselPage, setCarouselPage] = useState(0)
+  const [isMobile, setIsMobile] = useState(() => window.matchMedia(MOBILE_BREAKPOINT_QUERY).matches)
 
   const [dialogOpen, setDialogOpen] = useState(false)
   const [editing, setEditing] = useState<StickyNote | null>(null)
@@ -119,21 +121,31 @@ export function StickyNotesBoard({ notes, setNotes, rooms, guests, loadError }: 
     })
   }, [sortedGuests, formRoomId, formGuestId])
 
+  useEffect(() => {
+    const media = window.matchMedia(MOBILE_BREAKPOINT_QUERY)
+    const sync = (mobile: boolean) => setIsMobile(mobile)
+    sync(media.matches)
+    const onChange = (event: MediaQueryListEvent) => sync(event.matches)
+    media.addEventListener('change', onChange)
+    return () => media.removeEventListener('change', onChange)
+  }, [])
+
+  const slotsPerPage = isMobile ? MOBILE_SLOTS_PER_PAGE : DESKTOP_SLOTS_PER_PAGE
   const slots = useMemo<(StickyNote | 'add')[]>(() => [...notes, 'add'], [notes])
-  const totalPages = Math.max(1, Math.ceil(slots.length / SLOTS_PER_PAGE))
+  const totalPages = Math.max(1, Math.ceil(slots.length / slotsPerPage))
 
   useEffect(() => {
     setCarouselPage((p) => Math.min(Math.max(0, p), totalPages - 1))
   }, [totalPages])
 
-  const showCarouselNav = slots.length > SLOTS_PER_PAGE
-  const pageStart = carouselPage * SLOTS_PER_PAGE
+  const showCarouselNav = slots.length > slotsPerPage
+  const pageStart = carouselPage * slotsPerPage
   const rowCells = useMemo<StickyRowCell[]>(() => {
-    const slice = slots.slice(pageStart, pageStart + SLOTS_PER_PAGE)
+    const slice = slots.slice(pageStart, pageStart + slotsPerPage)
     const out: StickyRowCell[] = [...slice]
-    while (out.length < SLOTS_PER_PAGE) out.push('empty')
+    while (out.length < slotsPerPage) out.push('empty')
     return out
-  }, [slots, pageStart])
+  }, [slots, pageStart, slotsPerPage])
 
   function openNew() {
     setEditing(null)
@@ -260,7 +272,10 @@ export function StickyNotesBoard({ notes, setNotes, rooms, guests, loadError }: 
         ) : null}
         <div
           ref={viewportRef}
-          className="grid h-[8rem] min-h-0 min-w-0 flex-1 grid-cols-6 gap-3 overflow-hidden"
+          className={cn(
+            'grid h-[8rem] min-h-0 min-w-0 flex-1 gap-3 overflow-hidden',
+            isMobile ? 'grid-cols-3' : 'grid-cols-6',
+          )}
         >
           {rowCells.map((item, cellIdx) => {
             if (item === 'empty') {

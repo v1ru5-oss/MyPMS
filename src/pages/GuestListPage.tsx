@@ -121,7 +121,7 @@ export default function GuestListPage() {
   }, [guests, bookings, qFirstName, qLastName, qStartDate, qEndDate, qStatus])
 
   return (
-    <main className="flex min-h-screen w-full flex-col gap-6 p-6">
+    <main className="flex min-h-screen w-full flex-col gap-4 p-4 sm:gap-6 sm:p-6">
       <Dialog
         open={dialogGuestId !== null}
         onOpenChange={(open) => {

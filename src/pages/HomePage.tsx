@@ -1225,7 +1225,7 @@ function HomePage() {
           </div>
         </div>
       ) : null}
-      <div className="flex min-h-0 min-w-0 w-full flex-1 flex-col gap-6 p-6">
+      <div className="flex min-h-0 min-w-0 w-full flex-1 flex-col gap-4 p-4 sm:gap-6 sm:p-6">
         <header className="flex min-w-0 w-full shrink-0 flex-col gap-4">
           {housekeeperOnly ? (
             <p className="text-sm text-muted-foreground">
@@ -1340,7 +1340,7 @@ function HomePage() {
               <div
                 className={cn(
                   'mb-4 grid min-w-0 shrink-0 gap-3 sm:gap-4',
-                  admin ? 'grid-cols-2' : 'grid-cols-1',
+                  admin ? 'grid-cols-1 md:grid-cols-2' : 'grid-cols-1',
                 )}
               >
                 <div className="min-h-0 min-w-0">
