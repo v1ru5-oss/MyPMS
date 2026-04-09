@@ -1,0 +1,22 @@
+{
+  "rooms": [
+    {
+      "id": "demo-room-1",
+      "name": "101",
+      "capacity": 2,
+      "category": "Дом Москва"
+    }
+  ],
+  "guests": [],
+  "bookings": [],
+  "users": [
+    {
+      "id": "ignored-by-import",
+      "username": "admin",
+      "passwordHash": "not-migrated",
+      "role": "admin",
+      "canManageUsers": true,
+      "fullAccess": true
+    }
+  ]
+}

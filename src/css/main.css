@@ -1,0 +1,102 @@
+/**
+ * Единая точка стилей UI: токены темы, базовые слои, сторонние виджеты.
+ * Tailwind читает цвета и радиусы через hsl(var(--*)) в tailwind.config.js.
+ */
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer components {
+  /* Стикеры заметок (базовая тень/рамка; заливка — inline из stickyNoteSurfaceStyle) */
+  .sticky-note {
+    box-shadow:
+      1px 1px 0 hsl(45 30% 70% / 0.45),
+      2px 4px 12px hsl(220 16% 13% / 0.1);
+    border: 1px solid hsl(45 55% 58% / 0.35);
+  }
+  .dark .sticky-note {
+    box-shadow:
+      1px 1px 0 hsl(45 20% 20% / 0.5),
+      2px 5px 14px hsl(0 0% 0% / 0.35);
+    border-color: hsl(45 30% 35% / 0.5);
+  }
+
+  /* Белый текст с тонкой чёрной обводкой (читаемость на жёлтом и красном градиенте) */
+  .sticky-note-type p {
+    color: #fff;
+    -webkit-text-stroke: 0.4px rgb(0, 0, 0);
+    paint-order: stroke fill;
+  }
+  .sticky-note-type .sticky-note-type-meta {
+    border-top-color: rgb(0 0 0 / 0.22);
+  }
+  .sticky-note-type .sticky-note-type-meta p {
+    -webkit-text-stroke: 0.28px rgb(0, 0, 0);
+  }
+}
+
+@layer base {
+  :root {
+    color-scheme: light;
+
+    /*
+     * Светлая тема — в духе тёмной: те же холодные сланцевые тона, без чистого белого.
+     * Слои: canvas → приподнятые панели (card) чуть светлее фона, но не #fff.
+     */
+    --background: 220 11% 93%;
+    --foreground: 220 22% 12%;
+
+    --card: 220 9% 96%;
+    --card-foreground: 220 22% 12%;
+
+    --primary: 220 26% 26%;
+    --primary-foreground: 220 14% 95%;
+
+    --muted: 220 9% 88%;
+    --muted-foreground: 220 7% 38%;
+
+    --border: 220 8% 82%;
+    --input: 220 8% 84%;
+    --ring: 220 20% 40%;
+
+    --radius: 0.625rem;
+  }
+
+  .dark {
+    color-scheme: dark;
+    --background: 222.2 84% 4.9%;
+    --foreground: 210 40% 98%;
+
+    --card: 222.2 47.4% 8%;
+    --card-foreground: 210 40% 98%;
+
+    --primary: 210 40% 98%;
+    --primary-foreground: 222.2 47.4% 11.2%;
+
+    --muted: 217.2 32.6% 17.5%;
+    --muted-foreground: 215 20.2% 65.1%;
+
+    --border: 217.2 32.6% 17.5%;
+    --input: 217.2 32.6% 17.5%;
+    --ring: 212.7 26.8% 83.9%;
+
+    --radius: 0.625rem;
+  }
+
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background font-sans text-foreground antialiased;
+    font-feature-settings: 'rlig' 1, 'calt' 1;
+    text-rendering: optimizeLegibility;
+  }
+}
+
+/* react-day-picker (если используется на страницах) */
+.rdp-root {
+  --rdp-accent-color: hsl(var(--primary));
+  --rdp-background-color: hsl(var(--muted));
+}
