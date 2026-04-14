@@ -17,6 +17,7 @@ import { Label } from '@/components/ui/label'
 import { useAuth } from '@/contexts/AuthContext'
 import { isAdminUser, isConciergeUser } from '@/lib/access'
 import { fetchGuests, fetchRoomClosures, fetchRooms, setRoomClosures } from '@/lib/pms-db'
+import { randomUUID } from '@/lib/utils'
 import type { Guest, Room } from '@/types/models'
 
 type AppSidebarConciergePanelsProps = {
@@ -309,7 +310,7 @@ export function AppSidebarConciergePanels({ compact = false }: AppSidebarConcier
                       const next = [
                         ...roomClosures,
                         {
-                          id: crypto.randomUUID(),
+                          id: randomUUID(),
                           startAt: startIso,
                           endAt: endIso,
                           reason: closeReason.trim(),

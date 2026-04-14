@@ -66,7 +66,7 @@ import {
   setRoomClosures as setRoomClosuresInDb,
   setBookingSubGuests as setBookingSubGuestsInDb,
 } from '@/lib/pms-db'
-import { cn } from '@/lib/utils'
+import { cn, randomUUID } from '@/lib/utils'
 import {
   type Booking,
   type BookingAdditionalService,
@@ -878,7 +878,7 @@ function HomePage() {
         const existing = prev.find((x) => x.position === position)
         return (
           existing ?? {
-            id: crypto.randomUUID(),
+            id: randomUUID(),
             position,
             lastName: '',
             firstName: '',
@@ -1013,7 +1013,7 @@ function HomePage() {
       setBookingError(e instanceof Error ? e.message : 'Не удалось определить профиль гостя.')
       return
     }
-    const guestId = crypto.randomUUID()
+    const guestId = randomUUID()
     const guestNameForBooking = buildGuestDisplayName(ln, fn, middle)
 
     const newGuest: Guest = {
@@ -1047,7 +1047,7 @@ function HomePage() {
       freshPricing.specialConditions,
     )
     const newBooking: Booking = {
-      id: crypto.randomUUID(),
+      id: randomUUID(),
       roomId: bookingForm.roomId,
       guestName: guestNameForBooking,
       startDate: bookingForm.startDate,
@@ -1249,7 +1249,7 @@ function HomePage() {
       })
       const existingSubGuests = bookingSubGuests[booking.id] ?? []
       const primary = existingSubGuests.find((x) => x.position === 1) ?? {
-        id: crypto.randomUUID(),
+        id: randomUUID(),
         bookingId: booking.id,
         position: 1,
         lastName,
@@ -1456,7 +1456,7 @@ function HomePage() {
 
       if (!guestId) {
         const g: Guest = {
-          id: crypto.randomUUID(),
+          id: randomUUID(),
           profileId: resolvedGuestProfileId,
           firstName: fn,
           lastName: ln,
@@ -1841,7 +1841,7 @@ function HomePage() {
         const existing = prev.find((x) => x.position === position)
         return (
           existing ?? {
-            id: crypto.randomUUID(),
+            id: randomUUID(),
             position,
             lastName: '',
             firstName: '',
@@ -1949,7 +1949,7 @@ function HomePage() {
       setNewBookingSubGuests(
         template.guests.map((item) => ({
           ...item,
-          id: crypto.randomUUID(),
+          id: randomUUID(),
         })),
       )
       setNewBookingTemplateCapacityWarning('')
@@ -1982,7 +1982,7 @@ function HomePage() {
       setEditingSubGuests(
         template.guests.map((item) => ({
           ...item,
-          id: crypto.randomUUID(),
+          id: randomUUID(),
         })),
       )
       setEditSubGuestsTemplateBookingId(template.bookingId)

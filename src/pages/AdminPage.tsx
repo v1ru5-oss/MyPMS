@@ -29,7 +29,7 @@ import {
   upsertRoomCategory,
   upsertAdditionalService,
 } from '@/lib/pms-db'
-import { cn } from '@/lib/utils'
+import { cn, randomUUID } from '@/lib/utils'
 import {
   type DayOfWeek,
   type AdditionalService,
@@ -387,7 +387,7 @@ export default function AdminPage() {
     setEditedSpecialConditions((prev) => [
       ...prev,
       {
-        id: crypto.randomUUID(),
+        id: randomUUID(),
         title: '',
         startAt: toLocalDateTimeInputValue(now.toISOString()),
         endAt: toLocalDateTimeInputValue(end.toISOString()),
@@ -463,7 +463,7 @@ export default function AdminPage() {
     setEditedClosures((prev) => [
       ...prev,
       {
-        id: crypto.randomUUID(),
+        id: randomUUID(),
         startAt: toLocalDateTimeInputValue(now.toISOString()),
         endAt: toLocalDateTimeInputValue(end.toISOString()),
         reason: '',
@@ -603,7 +603,7 @@ export default function AdminPage() {
     const categoryPricePreset = roomCategories.find((item) => item.name === category)
     const next: Room[] = [
       ...rooms,
-      { id: crypto.randomUUID(), name, capacity: cap, category },
+      { id: randomUUID(), name, capacity: cap, category },
     ]
     const createdRoom = next[next.length - 1]!
     setRooms(next)
@@ -825,7 +825,7 @@ export default function AdminPage() {
       setServiceErr('Цена услуги должна быть не меньше 0.')
       return
     }
-    const service: AdditionalService = { id: crypto.randomUUID(), name, price }
+    const service: AdditionalService = { id: randomUUID(), name, price }
     try {
       await upsertAdditionalService(service)
       setServices((prev) => [...prev, service].sort((a, b) => a.name.localeCompare(b.name, 'ru')))

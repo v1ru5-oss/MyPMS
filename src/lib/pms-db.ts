@@ -8,6 +8,7 @@ import {
 } from '@/lib/booking-check-in-time'
 import { normalizeRole } from '@/lib/access'
 import { getSupabase } from '@/lib/supabase'
+import { randomUUID } from '@/lib/utils'
 import type {
   AdditionalService,
   BookingAdditionalService,
@@ -763,7 +764,7 @@ export type StickyNoteInput = {
 
 export async function insertStickyNote(input: StickyNoteInput): Promise<StickyNote> {
   const sb = getSupabase()
-  const id = crypto.randomUUID()
+  const id = randomUUID()
   const row = {
     id,
     body: input.body.trim(),
