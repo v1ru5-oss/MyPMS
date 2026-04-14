@@ -1,7 +1,8 @@
 import { addDays, format, parseISO } from 'date-fns'
 import { ru } from 'date-fns/locale'
 import { ChevronLeft, ChevronRight } from 'lucide-react'
-import { useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from 'react'
+import { createPortal } from 'react-dom'
 
 import { Button } from '@/components/ui/button'
 import {
@@ -22,7 +23,7 @@ import {
 } from '@/lib/pms-db'
 import { stickyNotePreview, stickyNoteSurfaceStyle } from '@/lib/sticky-note-ui'
 import { cn } from '@/lib/utils'
-import type { Guest, PublicUser, Room, StickyNote } from '@/types/models'
+import type { Booking, BookingSubGuest, Guest, PublicUser, Room, StickyNote } from '@/types/models'
 
 function groupRoomsByCategoryOrdered(rooms: Room[]): { category: string; rooms: Room[] }[] {
   const map = new Map<string, Room[]>()
@@ -55,7 +56,13 @@ const DESKTOP_SLOTS_PER_PAGE = 6
 
 type StickyRowCell = StickyNote | 'add' | 'empty'
 
-/** Гость в выбранном номере с проживанием, пересекающим [startKey, endKey] (yyyy-MM-dd); уже выехавших не показываем. */
+/** Проживание пересекает [startKey, endKey]; уже выехавших не показываем. */
+function guestActiveInDateWindow(guest: Guest, windowStartKey: string, windowEndKey: string): boolean {
+  if (guest.checkedOutAt) return false
+  return guest.startDate <= windowEndKey && guest.endDate >= windowStartKey
+}
+
+/** Гость в выбранном номере с проживанием, пересекающим [startKey, endKey] (yyyy-MM-dd). */
 function guestInRoomForDateWindow(
   guest: Guest,
   roomId: string,
@@ -63,8 +70,93 @@ function guestInRoomForDateWindow(
   windowEndKey: string,
 ): boolean {
   if (guest.roomId !== roomId) return false
-  if (guest.checkedOutAt) return false
-  return guest.startDate <= windowEndKey && guest.endDate >= windowStartKey
+  return guestActiveInDateWindow(guest, windowStartKey, windowEndKey)
+}
+
+function bookingOverlapsDateWindow(
+  booking: Booking,
+  windowStartKey: string,
+  windowEndKey: string,
+): boolean {
+  return booking.startDate <= windowEndKey && booking.endDate >= windowStartKey
+}
+
+function formatSubGuestLabel(sg: BookingSubGuest): string {
+  const full = [sg.lastName, sg.firstName, sg.middleName?.trim()].filter(Boolean).join(' ')
+  const base = full.trim() ? full : `Гость ${sg.position}`
+  const child = sg.isChild ? ' (реб.)' : ''
+  return `${base}${child}`
+}
+
+function stickyNoteGuestLine(
+  note: StickyNote,
+  guests: Guest[],
+  bookingSubGuests: BookingSubGuest[],
+): string | undefined {
+  if (note.bookingSubGuestId) {
+    const sg = bookingSubGuests.find((s) => s.id === note.bookingSubGuestId)
+    if (sg) return formatSubGuestLabel(sg)
+  }
+  if (note.guestId) {
+    const g = guests.find((x) => x.id === note.guestId)
+    if (g) return formatGuestFullName(g)
+  }
+  return undefined
+}
+
+function parseGuestPick(
+  pick: string,
+  bookingSubGuests: BookingSubGuest[],
+  bookings: Booking[],
+): { guestId: string | null; bookingSubGuestId: string | null } {
+  const t = pick.trim()
+  if (!t) return { guestId: null, bookingSubGuestId: null }
+  if (t.startsWith('g:')) {
+    return { guestId: t.slice(2), bookingSubGuestId: null }
+  }
+  if (t.startsWith('s:')) {
+    const sid = t.slice(2)
+    const sg = bookingSubGuests.find((x) => x.id === sid)
+    if (!sg) return { guestId: null, bookingSubGuestId: null }
+    const bk = bookings.find((b) => b.id === sg.bookingId)
+    return { guestId: bk?.guestId?.trim() || null, bookingSubGuestId: sid }
+  }
+  return { guestId: null, bookingSubGuestId: null }
+}
+
+type GuestPickOption = { value: string; label: string }
+
+/** Подпись выбранного гостя/субгостя — как в списке опций (с суффиксом номера, если номер в форме не задан). */
+function labelForGuestPickValue(
+  pick: string,
+  sortedGuests: Guest[],
+  bookings: Booking[],
+  bookingSubGuests: BookingSubGuest[],
+  roomNameById: Map<string, string>,
+  formRoomId: string,
+): string {
+  const t = pick.trim()
+  if (!t) return ''
+  const rid = formRoomId.trim()
+  if (t.startsWith('g:')) {
+    const g = sortedGuests.find((x) => x.id === t.slice(2))
+    if (!g) return ''
+    const name = formatGuestFullName(g)
+    return rid ? name : `${name} · № ${roomNameById.get(g.roomId) ?? g.roomId}`
+  }
+  if (t.startsWith('s:')) {
+    const sg = bookingSubGuests.find((x) => x.id === t.slice(2))
+    if (!sg) return ''
+    const bk = bookings.find((b) => b.id === sg.bookingId)
+    const base = formatSubGuestLabel(sg)
+    const roomId = bk?.roomId ?? ''
+    return rid ? base : `${base} · № ${roomNameById.get(roomId) ?? roomId}`
+  }
+  return ''
+}
+
+function guestPickQueryNorm(s: string): string {
+  return s.trim().toLowerCase()
 }
 
 function toDatetimeLocalValue(iso: string | null | undefined): string {
@@ -82,6 +174,9 @@ type StickyNotesBoardProps = {
   setNotes: Dispatch<SetStateAction<StickyNote[]>>
   rooms: Room[]
   guests: Guest[]
+  bookings: Booking[]
+  /** Плоский список субгостей по всем броням (как на главной). */
+  bookingSubGuests: BookingSubGuest[]
   currentUser: PublicUser
   loadError?: string
 }
@@ -91,6 +186,8 @@ export function StickyNotesBoard({
   setNotes,
   rooms,
   guests,
+  bookings,
+  bookingSubGuests,
   currentUser,
   loadError,
 }: StickyNotesBoardProps) {
@@ -102,7 +199,15 @@ export function StickyNotesBoard({
   const [editing, setEditing] = useState<StickyNote | null>(null)
   const [formBody, setFormBody] = useState('')
   const [formRoomId, setFormRoomId] = useState('')
-  const [formGuestId, setFormGuestId] = useState('')
+  /** Значение селекта: `g:<guests.id>` или `s:<booking_sub_guests.id>` */
+  const [formGuestPick, setFormGuestPick] = useState('')
+  /** Текст в поле поиска гостя (живой фильтр). */
+  const [guestInput, setGuestInput] = useState('')
+  const [guestComboOpen, setGuestComboOpen] = useState(false)
+  const guestComboAnchorRef = useRef<HTMLDivElement>(null)
+  const [guestListRect, setGuestListRect] = useState<{ top: number; left: number; width: number } | null>(null)
+  /** Узел контента диалога: портал списка гостей должен быть внутри него, иначе модальный слой Radix блокирует клики. */
+  const [dialogPortalEl, setDialogPortalEl] = useState<HTMLElement | null>(null)
   const [formDeadline, setFormDeadline] = useState('')
   const [saving, setSaving] = useState(false)
   const [formError, setFormError] = useState('')
@@ -116,23 +221,118 @@ export function StickyNotesBoard({
     })
   }, [guests])
 
-  /** Гости в номере с проживанием в окне сегодня…сегодня+7 дней; плюс текущий выбор при редактировании (если уже не в окне). */
-  const guestsForSelectedRoom = useMemo(() => {
+  const roomNameById = useMemo(() => new Map(rooms.map((r) => [r.id, r.name] as const)), [rooms])
+
+  /** Карточки Guest + субгости по броням; при выбранном номере — только по этому номеру, иначе — все за окно дат. */
+  const guestPickOptions = useMemo((): GuestPickOption[] => {
     const rid = formRoomId.trim()
-    if (!rid) return []
     const windowStartKey = format(new Date(), 'yyyy-MM-dd')
     const windowEndKey = format(addDays(new Date(), 7), 'yyyy-MM-dd')
-    const inRoom = sortedGuests.filter((g) => guestInRoomForDateWindow(g, rid, windowStartKey, windowEndKey))
-    const selectedId = formGuestId.trim()
-    if (!selectedId) return inRoom
-    const selected = sortedGuests.find((g) => g.id === selectedId)
-    if (!selected || inRoom.some((g) => g.id === selectedId)) return inRoom
-    return [...inRoom, selected].sort((a, b) => {
-      const c = a.lastName.localeCompare(b.lastName, 'ru')
-      if (c !== 0) return c
-      return a.firstName.localeCompare(b.firstName, 'ru')
-    })
-  }, [sortedGuests, formRoomId, formGuestId])
+    const options: GuestPickOption[] = []
+    const seen = new Set<string>()
+
+    for (const g of sortedGuests) {
+      const inWindow = rid
+        ? guestInRoomForDateWindow(g, rid, windowStartKey, windowEndKey)
+        : guestActiveInDateWindow(g, windowStartKey, windowEndKey)
+      if (!inWindow) continue
+      const value = `g:${g.id}`
+      if (seen.has(value)) continue
+      seen.add(value)
+      const name = formatGuestFullName(g)
+      const label = rid ? name : `${name} · № ${roomNameById.get(g.roomId) ?? g.roomId}`
+      options.push({ value, label })
+    }
+
+    const bookingsInScope = rid
+      ? bookings.filter(
+          (b) => b.roomId === rid && bookingOverlapsDateWindow(b, windowStartKey, windowEndKey),
+        )
+      : bookings.filter((b) => bookingOverlapsDateWindow(b, windowStartKey, windowEndKey))
+
+    for (const b of bookingsInScope) {
+      const subs = bookingSubGuests
+        .filter((s) => s.bookingId === b.id)
+        .sort((a, c) => a.position - c.position)
+      for (const sg of subs) {
+        if (sg.position === 1 && b.guestId) continue
+        const value = `s:${sg.id}`
+        if (seen.has(value)) continue
+        seen.add(value)
+        const base = formatSubGuestLabel(sg)
+        const label = rid ? base : `${base} · № ${roomNameById.get(b.roomId) ?? b.roomId}`
+        options.push({ value, label })
+      }
+    }
+
+    options.sort((a, b) => a.label.localeCompare(b.label, 'ru'))
+
+    const pick = formGuestPick.trim()
+    if (pick && !seen.has(pick)) {
+      if (pick.startsWith('g:')) {
+        const g = sortedGuests.find((x) => x.id === pick.slice(2))
+        if (g) options.push({ value: pick, label: formatGuestFullName(g) })
+      } else if (pick.startsWith('s:')) {
+        const sg = bookingSubGuests.find((x) => x.id === pick.slice(2))
+        if (sg) options.push({ value: pick, label: formatSubGuestLabel(sg) })
+      }
+    }
+
+    return options
+  }, [sortedGuests, bookings, bookingSubGuests, formRoomId, formGuestPick, roomNameById])
+
+  const filteredGuestPickOptions = useMemo(() => {
+    const q = guestPickQueryNorm(guestInput)
+    if (!q) return guestPickOptions
+    return guestPickOptions.filter((o) => guestPickQueryNorm(o.label).includes(q))
+  }, [guestPickOptions, guestInput])
+
+  const updateGuestListRect = useCallback(() => {
+    if (!guestComboOpen || !guestComboAnchorRef.current) {
+      setGuestListRect(null)
+      return
+    }
+    const r = guestComboAnchorRef.current.getBoundingClientRect()
+    setGuestListRect({ top: r.bottom + 6, left: r.left, width: r.width })
+  }, [guestComboOpen])
+
+  useLayoutEffect(() => {
+    updateGuestListRect()
+  }, [updateGuestListRect, guestInput, filteredGuestPickOptions.length, dialogOpen])
+
+  useEffect(() => {
+    if (!guestComboOpen) return
+    const onResizeOrScroll = () => updateGuestListRect()
+    window.addEventListener('resize', onResizeOrScroll)
+    window.addEventListener('scroll', onResizeOrScroll, true)
+    return () => {
+      window.removeEventListener('resize', onResizeOrScroll)
+      window.removeEventListener('scroll', onResizeOrScroll, true)
+    }
+  }, [guestComboOpen, updateGuestListRect])
+
+  useEffect(() => {
+    if (!dialogOpen) {
+      setGuestComboOpen(false)
+      setGuestListRect(null)
+      setDialogPortalEl(null)
+    }
+  }, [dialogOpen])
+
+  /** Только смена номера в форме меняет суффикс «· № …» у выбранного гостя. */
+  useEffect(() => {
+    if (!formGuestPick.trim()) return
+    const next = labelForGuestPickValue(
+      formGuestPick,
+      sortedGuests,
+      bookings,
+      bookingSubGuests,
+      roomNameById,
+      formRoomId,
+    )
+    if (next) setGuestInput(next)
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- только номер; иначе перетирается ввод при обновлении списков
+  }, [formRoomId])
 
   useEffect(() => {
     const media = window.matchMedia(MOBILE_BREAKPOINT_QUERY)
@@ -164,7 +364,9 @@ export function StickyNotesBoard({
     setEditing(null)
     setFormBody('')
     setFormRoomId('')
-    setFormGuestId('')
+    setFormGuestPick('')
+    setGuestInput('')
+    setGuestComboOpen(false)
     setFormDeadline('')
     setFormError('')
     setDialogOpen(true)
@@ -173,12 +375,33 @@ export function StickyNotesBoard({
   function openEdit(note: StickyNote) {
     setEditing(note)
     setFormBody(note.body)
-    const guestFromNote = note.guestId ? guests.find((g) => g.id === note.guestId) : undefined
-    const roomId =
-      note.roomId?.trim() ||
-      (guestFromNote?.roomId ?? '')
+    let roomId = note.roomId?.trim() || ''
+    if (!roomId && note.bookingSubGuestId) {
+      const sg = bookingSubGuests.find((s) => s.id === note.bookingSubGuestId)
+      const bk = sg ? bookings.find((b) => b.id === sg.bookingId) : undefined
+      roomId = bk?.roomId ?? ''
+    }
+    if (!roomId) {
+      const guestFromNote = note.guestId ? guests.find((g) => g.id === note.guestId) : undefined
+      roomId = guestFromNote?.roomId ?? ''
+    }
     setFormRoomId(roomId)
-    setFormGuestId(note.guestId ?? '')
+    let pickStr = ''
+    if (note.bookingSubGuestId) {
+      pickStr = `s:${note.bookingSubGuestId}`
+      setFormGuestPick(pickStr)
+    } else if (note.guestId) {
+      pickStr = `g:${note.guestId}`
+      setFormGuestPick(pickStr)
+    } else {
+      setFormGuestPick('')
+    }
+    setGuestInput(
+      pickStr
+        ? labelForGuestPickValue(pickStr, sortedGuests, bookings, bookingSubGuests, roomNameById, roomId)
+        : '',
+    )
+    setGuestComboOpen(false)
     setFormDeadline(toDatetimeLocalValue(note.deadlineAt))
     setFormError('')
     setDialogOpen(true)
@@ -200,20 +423,37 @@ export function StickyNotesBoard({
             return Number.isNaN(d.getTime()) ? null : d.toISOString()
           })()
     let roomId = formRoomId.trim() || null
-    const guestId = formGuestId.trim() || null
-    if (guestId) {
-      const g = guests.find((x) => x.id === guestId)
-      if (!g) {
-        setFormError('Гость не найден в списке.')
-        setSaving(false)
-        return
+    const { guestId, bookingSubGuestId } = parseGuestPick(formGuestPick, bookingSubGuests, bookings)
+    if (guestId || bookingSubGuestId) {
+      if (bookingSubGuestId) {
+        const sg = bookingSubGuests.find((x) => x.id === bookingSubGuestId)
+        if (!sg) {
+          setFormError('Проживающий не найден в списке.')
+          setSaving(false)
+          return
+        }
+        const bk = bookings.find((b) => b.id === sg.bookingId)
+        if (roomId && bk && bk.roomId !== roomId) {
+          setFormError('Выбранный проживающий относится к другому номеру.')
+          setSaving(false)
+          return
+        }
+        if (!roomId && bk) roomId = bk.roomId
       }
-      if (roomId && g.roomId !== roomId) {
-        setFormError('Выбранный гость относится к другому номеру. Укажите тот же номер, что в карточке гостя.')
-        setSaving(false)
-        return
+      if (guestId) {
+        const g = guests.find((x) => x.id === guestId)
+        if (!g) {
+          setFormError('Гость не найден в списке.')
+          setSaving(false)
+          return
+        }
+        if (roomId && g.roomId !== roomId) {
+          setFormError('Выбранный гость относится к другому номеру. Укажите тот же номер, что в карточке гостя.')
+          setSaving(false)
+          return
+        }
+        if (!roomId) roomId = g.roomId
       }
-      if (!roomId) roomId = g.roomId
     }
     try {
       if (editing) {
@@ -221,6 +461,7 @@ export function StickyNotesBoard({
           body,
           roomId,
           guestId,
+          bookingSubGuestId,
           deadlineAt: deadlineIso,
         })
         setNotes((prev) => prev.map((n) => (n.id === updated.id ? updated : n)))
@@ -229,6 +470,7 @@ export function StickyNotesBoard({
           body,
           roomId,
           guestId,
+          bookingSubGuestId,
           deadlineAt: deadlineIso,
           createdByUserId: currentUser.id,
           createdByName: currentUser.username,
@@ -336,8 +578,18 @@ export function StickyNotesBoard({
               )
             }
             const note = item
+            const guestLine = stickyNoteGuestLine(note, guests, bookingSubGuests)
             const guest = note.guestId ? guests.find((g) => g.id === note.guestId) : undefined
-            const roomIdForDisplay = note.roomId ?? guest?.roomId
+            const roomIdForDisplay =
+              note.roomId?.trim() ||
+              guest?.roomId ||
+              (note.bookingSubGuestId
+                ? (() => {
+                    const sg = bookingSubGuests.find((s) => s.id === note.bookingSubGuestId)
+                    const bk = sg ? bookings.find((b) => b.id === sg.bookingId) : undefined
+                    return bk?.roomId
+                  })()
+                : undefined)
             const room = roomIdForDisplay ? rooms.find((r) => r.id === roomIdForDisplay) : undefined
             const dl = deadlineLabel(note.deadlineAt)
             const surface = stickyNoteSurfaceStyle(note.deadlineAt)
@@ -355,10 +607,10 @@ export function StickyNotesBoard({
                 <p className="line-clamp-2 min-h-0 flex-1 whitespace-pre-wrap break-words">
                   {stickyNotePreview(note.body)}
                 </p>
-                {(room || guest || dl) && (
+                {(room || guestLine || dl) && (
                   <div className="sticky-note-type-meta mt-2 shrink-0 border-t pt-1.5 text-[10px]">
                     {room ? <p className="truncate">№ {room.name}</p> : null}
-                    {guest ? <p className="truncate">{formatGuestFullName(guest)}</p> : null}
+                    {guestLine ? <p className="truncate">{guestLine}</p> : null}
                     {dl ? <p className="tabular-nums">до {dl}</p> : null}
                     <p className="truncate">автор: {author}</p>
                   </div>
@@ -383,7 +635,7 @@ export function StickyNotesBoard({
       </div>
 
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-        <DialogContent>
+        <DialogContent ref={setDialogPortalEl}>
           <DialogHeader>
             <DialogTitle>{editing ? 'Заметка' : 'Новая заметка'}</DialogTitle>
             <DialogDescription>
@@ -420,10 +672,29 @@ export function StickyNotesBoard({
                   onChange={(e) => {
                     const next = e.target.value
                     setFormRoomId(next)
-                    const gid = formGuestId.trim()
-                    if (!gid) return
-                    const g = guests.find((x) => x.id === gid)
-                    if (!g || g.roomId !== next) setFormGuestId('')
+                    const pick = formGuestPick.trim()
+                    if (!pick) return
+                    const { guestId: gid, bookingSubGuestId: sid } = parseGuestPick(
+                      pick,
+                      bookingSubGuests,
+                      bookings,
+                    )
+                    if (sid) {
+                      const sg = bookingSubGuests.find((x) => x.id === sid)
+                      const bk = sg ? bookings.find((b) => b.id === sg.bookingId) : undefined
+                      if (bk && bk.roomId !== next) {
+                        setFormGuestPick('')
+                        setGuestInput('')
+                      }
+                      return
+                    }
+                    if (gid) {
+                      const g = guests.find((x) => x.id === gid)
+                      if (!g || g.roomId !== next) {
+                        setFormGuestPick('')
+                        setGuestInput('')
+                      }
+                    }
                   }}
                 >
                   <option value="">—</option>
@@ -439,29 +710,70 @@ export function StickyNotesBoard({
                 </select>
               </div>
               <div className="grid gap-2">
-                <Label htmlFor="sticky-guest">Гость в этом номере (необязательно)</Label>
-                <select
-                  id="sticky-guest"
-                  className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm disabled:cursor-not-allowed disabled:opacity-60"
-                  value={formGuestId}
-                  disabled={!formRoomId.trim()}
-                  onChange={(e) => setFormGuestId(e.target.value)}
-                >
-                  <option value="">
-                    {formRoomId.trim() ? '—' : 'Сначала выберите номер'}
-                  </option>
-                  {guestsForSelectedRoom.map((g) => (
-                    <option key={g.id} value={g.id}>
-                      {formatGuestFullName(g)}
-                    </option>
-                  ))}
-                </select>
-                {formRoomId.trim() ? (
-                  <p className="text-xs text-muted-foreground">
-                    Только гости с проживанием в этом номере в период с сегодняшнего дня по +7 дней (даты заезда/выезда в
-                    карточке).
-                  </p>
-                ) : null}
+                <Label htmlFor="sticky-guest">Гость (необязательно)</Label>
+                <div ref={guestComboAnchorRef} className="relative">
+                  <Input
+                    id="sticky-guest"
+                    value={guestInput}
+                    onChange={(e) => {
+                      const v = e.target.value
+                      setGuestInput(v)
+                      setGuestComboOpen(true)
+                      const cur = guestPickOptions.find((o) => o.value === formGuestPick)
+                      if (!cur || cur.label !== v) {
+                        if (formGuestPick) setFormGuestPick('')
+                      }
+                    }}
+                    onFocus={() => setGuestComboOpen(true)}
+                    onBlur={() => {
+                      window.setTimeout(() => setGuestComboOpen(false), 120)
+                    }}
+                    placeholder="Начните вводить фамилию или имя…"
+                    autoComplete="off"
+                    role="combobox"
+                    aria-expanded={guestComboOpen}
+                    aria-controls="sticky-guest-listbox"
+                    aria-autocomplete="list"
+                  />
+                  {guestComboOpen && guestListRect && dialogPortalEl
+                    ? createPortal(
+                        <ul
+                          id="sticky-guest-listbox"
+                          role="listbox"
+                          style={{
+                            position: 'fixed',
+                            top: guestListRect.top,
+                            left: guestListRect.left,
+                            width: guestListRect.width,
+                            zIndex: 200,
+                          }}
+                          className="pointer-events-auto max-h-48 overflow-y-auto rounded-md border border-border bg-background py-1 text-sm shadow-md"
+                        >
+                          {filteredGuestPickOptions.length === 0 ? (
+                            <li className="px-3 py-2 text-muted-foreground">Никого не найдено</li>
+                          ) : (
+                            filteredGuestPickOptions.map((opt) => (
+                              <li key={opt.value} role="option">
+                                <button
+                                  type="button"
+                                  className="w-full px-3 py-2 text-left hover:bg-muted/80 focus:bg-muted/80 focus:outline-none"
+                                  onMouseDown={(e) => {
+                                    e.preventDefault()
+                                    setFormGuestPick(opt.value)
+                                    setGuestInput(opt.label)
+                                    setGuestComboOpen(false)
+                                  }}
+                                >
+                                  {opt.label}
+                                </button>
+                              </li>
+                            ))
+                          )}
+                        </ul>,
+                        dialogPortalEl,
+                      )
+                    : null}
+                </div>
               </div>
             </div>
             <div className="grid gap-2">

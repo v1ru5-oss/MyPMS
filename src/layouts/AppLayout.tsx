@@ -1,6 +1,7 @@
 import {
   BarChart3,
   ClipboardList,
+  DoorClosed,
   Home,
   Menu,
   NotebookPen,
@@ -16,7 +17,13 @@ import { ThemeSwitcher } from '@/components/ThemeSwitcher'
 import { UserBar } from '@/components/UserBar'
 import { Button, buttonVariants } from '@/components/ui/button'
 import { useAuth } from '@/contexts/AuthContext'
-import { isAdminUser, isConciergeUser, isHousekeeperUser } from '@/lib/access'
+import {
+  isAdminUser,
+  isConciergeUser,
+  isHousekeeperUser,
+  isSeniorTechnicianUser,
+  isTechnicianUser,
+} from '@/lib/access'
 import { cn } from '@/lib/utils'
 
 function navLinkClass({ isActive }: { isActive: boolean }) {
@@ -34,6 +41,7 @@ export default function AppLayout() {
   const { user } = useAuth()
   const admin = user ? isAdminUser(user) : false
   const conciergeOps = user ? admin || isConciergeUser(user) : false
+  const closedRoomsOps = user ? admin || isConciergeUser(user) || isTechnicianUser(user) || isSeniorTechnicianUser(user) : false
   const showRoomCleaningNav = user ? admin || isHousekeeperUser(user) : false
 
   const [isMobile, setIsMobile] = useState(() => window.matchMedia('(max-width: 767px)').matches)
@@ -179,6 +187,18 @@ export default function AppLayout() {
               >
                 <Users className="h-4 w-4 shrink-0" aria-hidden />
                 {!isDesktopCollapsed ? 'Список гостей' : null}
+              </NavLink>
+            ) : null}
+            {closedRoomsOps ? (
+              <NavLink
+                to="/closed-rooms"
+                className={isDesktopCollapsed ? navLinkCompactClass : navLinkClass}
+                onClick={handleNavClick}
+                aria-label="Закрытые номера"
+                title="Закрытые номера"
+              >
+                <DoorClosed className="h-4 w-4 shrink-0" aria-hidden />
+                {!isDesktopCollapsed ? 'Закрытые номера' : null}
               </NavLink>
             ) : null}
             {showRoomCleaningNav ? (

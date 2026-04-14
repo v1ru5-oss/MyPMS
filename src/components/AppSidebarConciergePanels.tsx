@@ -1,5 +1,5 @@
 import { format, parseISO } from 'date-fns'
-import { FileUser, PlusSquare } from 'lucide-react'
+import { FileUser, PlusSquare, Wrench } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 
@@ -16,7 +16,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { useAuth } from '@/contexts/AuthContext'
 import { isAdminUser, isConciergeUser } from '@/lib/access'
-import { fetchGuests, fetchRooms } from '@/lib/pms-db'
+import { fetchGuests, fetchRoomClosures, fetchRooms, setRoomClosures } from '@/lib/pms-db'
 import type { Guest, Room } from '@/types/models'
 
 type AppSidebarConciergePanelsProps = {
@@ -33,8 +33,15 @@ export function AppSidebarConciergePanels({ compact = false }: AppSidebarConcier
   const [guests, setGuests] = useState<Guest[]>([])
 
   const [isGuestCardModalOpen, setIsGuestCardModalOpen] = useState(false)
+  const [isCloseRoomModalOpen, setIsCloseRoomModalOpen] = useState(false)
   const [guestCardSearchFirstName, setGuestCardSearchFirstName] = useState('')
   const [guestCardSearchLastName, setGuestCardSearchLastName] = useState('')
+  const [closeRoomId, setCloseRoomId] = useState('')
+  const [closeStartAt, setCloseStartAt] = useState('')
+  const [closeEndAt, setCloseEndAt] = useState('')
+  const [closeReason, setCloseReason] = useState('')
+  const [closeRoomErr, setCloseRoomErr] = useState('')
+  const [isSavingCloseRoom, setIsSavingCloseRoom] = useState(false)
 
   useEffect(() => {
     if (!conciergeOps) return
@@ -65,6 +72,17 @@ export function AppSidebarConciergePanels({ compact = false }: AppSidebarConcier
       return okFirst && okLast
     })
   }, [guests, guestCardSearchFirstName, guestCardSearchLastName])
+
+  const roomsSorted = useMemo(
+    () => [...rooms].sort((a, b) => a.name.localeCompare(b.name, 'ru')),
+    [rooms],
+  )
+
+  useEffect(() => {
+    if (!isCloseRoomModalOpen) return
+    if (roomsSorted.length === 0) return
+    setCloseRoomId((prev) => (prev ? prev : roomsSorted[0]!.id))
+  }, [isCloseRoomModalOpen, roomsSorted])
 
   if (!conciergeOps) return null
 
@@ -170,6 +188,147 @@ export function AppSidebarConciergePanels({ compact = false }: AppSidebarConcier
                   })
                 )}
               </ul>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={isCloseRoomModalOpen}
+        onOpenChange={(open) => {
+          setIsCloseRoomModalOpen(open)
+          if (open) {
+            const now = new Date()
+            const inTwoHours = new Date(now.getTime() + 2 * 60 * 60 * 1000)
+            const toInput = (d: Date) => {
+              const pad = (n: number) => String(n).padStart(2, '0')
+              return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
+            }
+            setCloseStartAt(toInput(now))
+            setCloseEndAt(toInput(inTwoHours))
+            setCloseReason('')
+            setCloseRoomErr('')
+          }
+        }}
+      >
+        <DialogTrigger asChild>
+          <Button
+            type="button"
+            className={compact ? 'h-10 w-10 p-0' : 'w-full gap-2'}
+            variant="outline"
+            aria-label="Закрыть номер"
+            title="Закрыть номер"
+          >
+            <Wrench className="h-4 w-4 shrink-0" aria-hidden />
+            {!compact ? 'Закрыть номер' : null}
+          </Button>
+        </DialogTrigger>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Закрыть номер на обслуживание</DialogTitle>
+            <DialogDescription>
+              Укажите номер, период и причину закрытия. Закрытие сразу отобразится в шахматке.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-3 py-2">
+            <div className="grid gap-2">
+              <Label htmlFor="sidebarCloseRoomId">Номер</Label>
+              <select
+                id="sidebarCloseRoomId"
+                className="h-10 rounded-md border border-input bg-background px-3 text-sm"
+                value={closeRoomId}
+                onChange={(e) => setCloseRoomId(e.target.value)}
+              >
+                {roomsSorted.map((room) => (
+                  <option key={room.id} value={room.id}>
+                    {room.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="grid gap-2 sm:grid-cols-2">
+              <div className="grid gap-2">
+                <Label htmlFor="sidebarCloseStartAt">Начало</Label>
+                <Input
+                  id="sidebarCloseStartAt"
+                  type="datetime-local"
+                  value={closeStartAt}
+                  onChange={(e) => setCloseStartAt(e.target.value)}
+                />
+              </div>
+              <div className="grid gap-2">
+                <Label htmlFor="sidebarCloseEndAt">Окончание</Label>
+                <Input
+                  id="sidebarCloseEndAt"
+                  type="datetime-local"
+                  value={closeEndAt}
+                  onChange={(e) => setCloseEndAt(e.target.value)}
+                />
+              </div>
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="sidebarCloseReason">Причина</Label>
+              <Input
+                id="sidebarCloseReason"
+                value={closeReason}
+                onChange={(e) => setCloseReason(e.target.value)}
+                placeholder="Например: обслуживание кондиционера"
+              />
+            </div>
+            {closeRoomErr ? <p className="text-sm text-red-600 dark:text-red-400">{closeRoomErr}</p> : null}
+            <div className="flex justify-end gap-2">
+              <Button type="button" variant="outline" onClick={() => setIsCloseRoomModalOpen(false)} disabled={isSavingCloseRoom}>
+                Отмена
+              </Button>
+              <Button
+                type="button"
+                disabled={isSavingCloseRoom}
+                onClick={() => {
+                  if (!closeRoomId) {
+                    setCloseRoomErr('Выберите номер.')
+                    return
+                  }
+                  const startRaw = new Date(closeStartAt)
+                  const endRaw = new Date(closeEndAt)
+                  if (Number.isNaN(startRaw.getTime()) || Number.isNaN(endRaw.getTime())) {
+                    setCloseRoomErr('Проверьте даты закрытия.')
+                    return
+                  }
+                  const startIso = startRaw.toISOString()
+                  const endIso = endRaw.toISOString()
+                  if (new Date(endIso).getTime() < new Date(startIso).getTime()) {
+                    setCloseRoomErr('Окончание не может быть раньше начала.')
+                    return
+                  }
+                  setCloseRoomErr('')
+                  setIsSavingCloseRoom(true)
+                  void (async () => {
+                    try {
+                      const allClosures = await fetchRoomClosures()
+                      const roomClosures = allClosures.filter((item) => item.roomId === closeRoomId)
+                      const next = [
+                        ...roomClosures,
+                        {
+                          id: crypto.randomUUID(),
+                          startAt: startIso,
+                          endAt: endIso,
+                          reason: closeReason.trim(),
+                          createdByUserId: user?.id ?? null,
+                          createdByName: user?.username ?? null,
+                        },
+                      ]
+                      await setRoomClosures(closeRoomId, next)
+                      setIsCloseRoomModalOpen(false)
+                    } catch {
+                      setCloseRoomErr('Не удалось сохранить закрытие номера.')
+                    } finally {
+                      setIsSavingCloseRoom(false)
+                    }
+                  })()
+                }}
+              >
+                {isSavingCloseRoom ? 'Сохраняем…' : 'Сохранить'}
+              </Button>
             </div>
           </div>
         </DialogContent>

@@ -10,6 +10,7 @@ import GuestPage from '@/pages/GuestPage'
 import HomePage from '@/pages/HomePage'
 import LoginPage from '@/pages/LoginPage'
 import NotesPage from '@/pages/NotesPage'
+import ClosedRoomsPage from '@/pages/ClosedRoomsPage'
 import RoomCleaningPage from '@/pages/RoomCleaningPage'
 import SummaryPage from '@/pages/SummaryPage'
 
@@ -45,6 +46,7 @@ export default function App() {
         <Route path="summary" element={<SummaryPage />} />
         <Route path="notes" element={<NotesPage />} />
         <Route path="guests" element={<GuestListPage />} />
+        <Route path="closed-rooms" element={<ClosedRoomsPage />} />
         <Route path="room-cleaning" element={<RoomCleaningPage />} />
         <Route path="guest/:guestId" element={<GuestPage />} />
         <Route path="admin" element={<AdminPage />} />

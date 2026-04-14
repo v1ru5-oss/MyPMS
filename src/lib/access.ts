@@ -4,6 +4,8 @@ import type { PublicUser, UserRole } from '@/types/models'
 export function normalizeRole(role: string): UserRole {
   if (role === 'admin') return 'admin'
   if (role === 'housekeeper') return 'housekeeper'
+  if (role === 'technician') return 'technician'
+  if (role === 'senior_technician') return 'senior_technician'
   if (role === 'concierge' || role === 'staff') return 'concierge'
   return 'concierge'
 }
@@ -21,15 +23,26 @@ export function isHousekeeperUser(user: PublicUser): boolean {
   return normalizeRole(user.role) === 'housekeeper'
 }
 
+export function isTechnicianUser(user: PublicUser): boolean {
+  return normalizeRole(user.role) === 'technician'
+}
+
+export function isSeniorTechnicianUser(user: PublicUser): boolean {
+  return normalizeRole(user.role) === 'senior_technician'
+}
+
 export function canAccessPath(pathname: string, user: PublicUser): boolean {
   const admin = isAdminUser(user)
   const concierge = isConciergeUser(user)
   const housekeeper = isHousekeeperUser(user)
+  const technician = isTechnicianUser(user)
+  const seniorTechnician = isSeniorTechnicianUser(user)
 
-  if (pathname === '/' || pathname === '') return true
+  if (pathname === '/' || pathname === '') return !technician && !seniorTechnician
   if (pathname === '/summary') return admin
   if (pathname === '/notes') return admin || concierge
   if (pathname === '/guests') return admin || concierge
+  if (pathname === '/closed-rooms') return admin || concierge || technician || seniorTechnician
   if (pathname === '/room-cleaning') return admin || housekeeper
   if (pathname === '/admin') return admin
   if (pathname.startsWith('/guest/')) return admin || concierge
@@ -38,6 +51,9 @@ export function canAccessPath(pathname: string, user: PublicUser): boolean {
 
 /** Куда направить после входа, если запрошенный путь недоступен роли. */
 export function defaultHomePathForUser(user: PublicUser): string {
+  if ((isTechnicianUser(user) || isSeniorTechnicianUser(user)) && !isAdminUser(user)) {
+    return '/closed-rooms'
+  }
   if (isHousekeeperUser(user) && !isAdminUser(user)) return '/'
   return '/'
 }

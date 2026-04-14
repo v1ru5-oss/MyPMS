@@ -1,9 +1,11 @@
 import { format, isValid, parseISO } from 'date-fns'
 import { ru } from 'date-fns/locale'
-import { useEffect, useMemo, useState } from 'react'
+import { Trash2 } from 'lucide-react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useLocation } from 'react-router-dom'
 
 import { GuestDetailPanel } from '@/components/GuestDetailPanel'
+import { Button } from '@/components/ui/button'
 import {
   Dialog,
   DialogContent,
@@ -13,14 +15,37 @@ import {
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { useAuth } from '@/contexts/AuthContext'
+import { isAdminUser } from '@/lib/access'
 import {
   guestHasCheckedOut,
   isGuestCheckInConfirmed,
 } from '@/lib/guest-checkin'
-import { fetchBookings, fetchGuests, fetchRooms } from '@/lib/pms-db'
-import { type Booking, type Guest, type Room } from '@/types/models'
+import {
+  deleteGuestById,
+  fetchBookingSubGuests,
+  fetchBookings,
+  fetchGuests,
+  fetchRooms,
+} from '@/lib/pms-db'
+import { type Booking, type BookingSubGuest, type Guest, type Room } from '@/types/models'
 
 type GuestStatusFilter = 'all' | 'checked_in' | 'checked_out'
+type GuestVisitRow = {
+  guest: Guest
+  roomName: string
+  subGuests: BookingSubGuest[]
+  status: 'checked_in' | 'checked_out' | 'pending'
+}
+
+type GuestProfileGroup = {
+  key: string
+  profileId: string | null
+  lastName: string
+  firstName: string
+  middleName: string
+  visits: GuestVisitRow[]
+}
 
 /** Подтверждённый заезд (логика согласована с шахматкой и бронями). */
 function guestIsCheckedInOnly(g: Guest, bookings: Booking[]): boolean {
@@ -54,57 +79,177 @@ function formatCheckInColumn(startDate: string, checkedInAt: string | null | und
 
 export default function GuestListPage() {
   const location = useLocation()
+  const { user } = useAuth()
+  const isAdmin = user ? isAdminUser(user) : false
   const [rooms, setRooms] = useState<Room[]>([])
   const [bookings, setBookings] = useState<Booking[]>([])
   const [guests, setGuests] = useState<Guest[]>([])
+  const [bookingSubGuests, setBookingSubGuests] = useState<BookingSubGuest[]>([])
   const [loadError, setLoadError] = useState('')
+  const [deletingGuestId, setDeletingGuestId] = useState<string | null>(null)
   const [qFirstName, setQFirstName] = useState('')
   const [qLastName, setQLastName] = useState('')
+  const [qSubGuestName, setQSubGuestName] = useState('')
   const [qStartDate, setQStartDate] = useState('')
   const [qEndDate, setQEndDate] = useState('')
   const [qStatus, setQStatus] = useState<GuestStatusFilter>('all')
   const [dialogGuestId, setDialogGuestId] = useState<string | null>(null)
 
-  useEffect(() => {
-    let cancelled = false
+  const loadData = useCallback(async () => {
     setLoadError('')
-    void (async () => {
-      try {
-        const [r, b, g] = await Promise.all([fetchRooms(), fetchBookings(), fetchGuests()])
-        if (!cancelled) {
-          setRooms(r)
-          setBookings(b)
-          setGuests(g)
-        }
-      } catch (e) {
-        if (!cancelled) {
-          setLoadError(e instanceof Error ? e.message : 'Не удалось загрузить данные.')
-        }
-      }
-    })()
-    return () => {
-      cancelled = true
+    try {
+      const [r, b, g, sub] = await Promise.all([
+        fetchRooms(),
+        fetchBookings(),
+        fetchGuests(),
+        fetchBookingSubGuests(),
+      ])
+      setRooms(r)
+      setBookings(b)
+      setGuests(g)
+      setBookingSubGuests(sub)
+    } catch (e) {
+      setLoadError(e instanceof Error ? e.message : 'Не удалось загрузить данные.')
     }
-  }, [location.key])
+  }, [])
 
-  const filteredGuests = useMemo(() => {
+  useEffect(() => {
+    void loadData()
+  }, [location.key, loadData])
+
+  const handleDeleteVisit = useCallback(
+    async (guestId: string, guestLabel: string) => {
+      if (
+        !window.confirm(
+          `Удалить карточку гостя «${guestLabel}» и все связанные с ней брони? Действие необратимо.`,
+        )
+      ) {
+        return
+      }
+      setDeletingGuestId(guestId)
+      setLoadError('')
+      try {
+        await deleteGuestById(guestId)
+        await loadData()
+        setDialogGuestId((current) => (current === guestId ? null : current))
+      } catch (e) {
+        setLoadError(e instanceof Error ? e.message : 'Не удалось удалить запись.')
+      } finally {
+        setDeletingGuestId(null)
+      }
+    },
+    [loadData],
+  )
+
+  const bookingsByGuestId = useMemo(() => {
+    const map = new Map<string, Booking>()
+    bookings.forEach((booking) => {
+      const guestId = booking.guestId?.trim()
+      if (!guestId) return
+      const existing = map.get(guestId)
+      if (!existing || booking.startDate > existing.startDate) {
+        map.set(guestId, booking)
+      }
+    })
+    return map
+  }, [bookings])
+
+  const bookingSubGuestsByBookingId = useMemo(() => {
+    const map = new Map<string, BookingSubGuest[]>()
+    bookingSubGuests.forEach((item) => {
+      const list = map.get(item.bookingId) ?? []
+      list.push(item)
+      map.set(item.bookingId, list)
+    })
+    map.forEach((list, key) => {
+      map.set(
+        key,
+        [...list].sort((a, b) => a.position - b.position),
+      )
+    })
+    return map
+  }, [bookingSubGuests])
+
+  const profileGroups = useMemo(() => {
+    const roomNameById = new Map(rooms.map((room) => [room.id, room.name] as const))
+    const groups = new Map<string, GuestProfileGroup>()
+    guests.forEach((g) => {
+      const profileId = g.profileId?.trim() || null
+      const key = profileId ?? `guest:${g.id}`
+      const booking = bookingsByGuestId.get(g.id)
+      const subGuests =
+        booking != null
+          ? (bookingSubGuestsByBookingId.get(booking.id) ?? []).filter((item) => item.position > 1)
+          : []
+      const status: GuestVisitRow['status'] = guestHasCheckedOut(g)
+        ? 'checked_out'
+        : guestIsCheckedInOnly(g, bookings)
+          ? 'checked_in'
+          : 'pending'
+      const visit: GuestVisitRow = {
+        guest: g,
+        roomName: roomNameById.get(g.roomId) ?? g.roomId,
+        subGuests,
+        status,
+      }
+      const existing = groups.get(key)
+      if (!existing) {
+        groups.set(key, {
+          key,
+          profileId,
+          lastName: g.lastName,
+          firstName: g.firstName,
+          middleName: g.middleName?.trim() ?? '',
+          visits: [visit],
+        })
+        return
+      }
+      existing.visits.push(visit)
+      if (g.startDate > existing.visits[0].guest.startDate) {
+        existing.lastName = g.lastName
+        existing.firstName = g.firstName
+        existing.middleName = g.middleName?.trim() ?? ''
+      }
+    })
+    return [...groups.values()].map((group) => ({
+      ...group,
+      visits: [...group.visits].sort((a, b) => b.guest.startDate.localeCompare(a.guest.startDate)),
+    }))
+  }, [guests, rooms, bookingsByGuestId, bookingSubGuestsByBookingId, bookings])
+
+  const tableColSpan = isAdmin ? 11 : 10
+
+  const filteredGroups = useMemo(() => {
     const nf = qFirstName.trim().toLowerCase()
     const nl = qLastName.trim().toLowerCase()
-    const list = guests.filter((g) => {
-      if (nf && !g.firstName.toLowerCase().includes(nf)) return false
-      if (nl && !g.lastName.toLowerCase().includes(nl)) return false
-      if (qStartDate && g.startDate !== qStartDate) return false
-      if (qEndDate && g.endDate !== qEndDate) return false
-      if (qStatus === 'checked_in' && !guestIsCheckedInOnly(g, bookings)) return false
-      if (qStatus === 'checked_out' && !guestHasCheckedOut(g)) return false
+    const ns = qSubGuestName.trim().toLowerCase()
+    const list = profileGroups.filter((group) => {
+      if (nf && !group.firstName.toLowerCase().includes(nf)) return false
+      if (nl && !group.lastName.toLowerCase().includes(nl)) return false
+      if (ns) {
+        const hasSubGuestMatch = group.visits.some((visit) =>
+          visit.subGuests.some((item) => {
+          const fullName = [item.lastName, item.firstName, item.middleName?.trim()]
+            .filter(Boolean)
+            .join(' ')
+            .toLowerCase()
+          return fullName.includes(ns)
+          }),
+        )
+        if (!hasSubGuestMatch) return false
+      }
+      if (qStartDate && !group.visits.some((visit) => visit.guest.startDate === qStartDate)) return false
+      if (qEndDate && !group.visits.some((visit) => visit.guest.endDate === qEndDate)) return false
+      if (qStatus === 'checked_in' && !group.visits.some((visit) => visit.status === 'checked_in')) return false
+      if (qStatus === 'checked_out' && !group.visits.some((visit) => visit.status === 'checked_out')) return false
       return true
     })
 
-    /** Для «Все»: заехали → без статуса → выехали; внутри группы — по ФИО. */
-    function statusSortKey(g: Guest): number {
-      if (guestHasCheckedOut(g)) return 2
-      if (guestIsCheckedInOnly(g, bookings)) return 0
-      return 1
+    /** Для «Все»: заехали → без статуса → выехали; внутри — по ФИО. */
+    function statusSortKey(group: GuestProfileGroup): number {
+      if (group.visits.some((visit) => visit.status === 'checked_in')) return 0
+      if (group.visits.some((visit) => visit.status === 'pending')) return 1
+      return 2
     }
 
     return list.sort((a, b) => {
@@ -118,7 +263,15 @@ export default function GuestListPage() {
       if (c1 !== 0) return c1
       return (a.middleName ?? '').localeCompare(b.middleName ?? '', 'ru')
     })
-  }, [guests, bookings, qFirstName, qLastName, qStartDate, qEndDate, qStatus])
+  }, [
+    profileGroups,
+    qFirstName,
+    qLastName,
+    qSubGuestName,
+    qStartDate,
+    qEndDate,
+    qStatus,
+  ])
 
   return (
     <main className="flex min-h-screen w-full flex-col gap-4 p-4 sm:gap-6 sm:p-6">
@@ -161,7 +314,7 @@ export default function GuestListPage() {
         <h2 className="mb-3 text-xs font-medium uppercase tracking-wide text-muted-foreground">
           Поиск
         </h2>
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
           <div className="grid gap-1.5">
             <Label htmlFor="gl-first" className="text-xs">
               Имя
@@ -183,6 +336,19 @@ export default function GuestListPage() {
               id="gl-last"
               value={qLastName}
               onChange={(e) => setQLastName(e.target.value)}
+              placeholder="Подстрока"
+              className="h-8 text-xs"
+              autoComplete="off"
+            />
+          </div>
+          <div className="grid gap-1.5">
+            <Label htmlFor="gl-subguest" className="text-xs">
+              Субгость (ФИО)
+            </Label>
+            <Input
+              id="gl-subguest"
+              value={qSubGuestName}
+              onChange={(e) => setQSubGuestName(e.target.value)}
               placeholder="Подстрока"
               className="h-8 text-xs"
               autoComplete="off"
@@ -229,7 +395,7 @@ export default function GuestListPage() {
           </div>
         </div>
         <p className="mt-2 text-[11px] text-muted-foreground">
-          Найдено: {filteredGuests.length} из {guests.length}
+          Найдено профилей: {filteredGroups.length} из {profileGroups.length}
           {qStatus === 'all'
             ? ' · порядок: заехали, ожидают заезда, выехали'
             : null}
@@ -237,89 +403,167 @@ export default function GuestListPage() {
       </section>
 
       <section className="overflow-x-auto rounded-lg border border-border">
-        <table className="w-full min-w-[820px] border-collapse text-xs">
+        <table className="w-full min-w-[1100px] border-collapse text-xs">
           <thead>
             <tr className="border-b bg-muted/50 text-left">
               <th className="px-2 py-1.5 font-medium">Фамилия</th>
               <th className="px-2 py-1.5 font-medium">Имя</th>
               <th className="px-2 py-1.5 font-medium">Отчество</th>
-              <th className="px-2 py-1.5 font-medium">Номер</th>
-              <th className="px-2 py-1.5 font-medium">Заезд</th>
-              <th className="px-2 py-1.5 font-medium">Выезд</th>
+              <th className="px-2 py-1.5 font-medium">ID профиля</th>
+              <th className="min-w-[12rem] px-2 py-1.5 font-medium">Номер (по визитам)</th>
+              <th className="min-w-[16rem] px-2 py-1.5 font-medium">Субгости</th>
+              <th className="min-w-[9rem] px-2 py-1.5 font-medium">Заезд</th>
+              <th className="min-w-[9rem] px-2 py-1.5 font-medium">Выезд</th>
               <th className="min-w-[8.5rem] px-2 py-1.5 font-medium leading-tight">
                 Фактическая дата выезда
               </th>
               <th className="px-2 py-1.5 font-medium">Статус</th>
+              {isAdmin ? (
+                <th className="w-12 px-1 py-1.5 text-center font-medium" title="Только для роли администратор">
+                  Удалить
+                </th>
+              ) : null}
             </tr>
           </thead>
           <tbody>
-            {filteredGuests.length === 0 ? (
+            {filteredGroups.length === 0 ? (
               <tr>
-                <td colSpan={8} className="px-2 py-6 text-center text-muted-foreground">
+                <td colSpan={tableColSpan} className="px-2 py-6 text-center text-muted-foreground">
                   {loadError ? 'Нет данных.' : 'Нет записей по текущим условиям.'}
                 </td>
               </tr>
             ) : (
-              filteredGuests.map((guest) => {
-                const room = rooms.find((r) => r.id === guest.roomId)
-                const guestLabel = [guest.lastName, guest.firstName, guest.middleName?.trim()]
+              filteredGroups.map((group) => {
+                const guestLabel = [group.lastName, group.firstName, group.middleName?.trim()]
                   .filter(Boolean)
-                  .join(' ')
+                  .join(' ') || 'Гость'
                 return (
                   <tr
-                    key={guest.id}
-                    role="button"
-                    tabIndex={0}
-                    className="cursor-pointer border-b border-border transition-colors last:border-0 hover:bg-muted/50 focus-visible:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
-                    onClick={() => setDialogGuestId(guest.id)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter' || e.key === ' ') {
-                        e.preventDefault()
-                        setDialogGuestId(guest.id)
-                      }
-                    }}
-                    aria-label={`Карточка гостя: ${guestLabel}`}
+                    key={group.key}
+                    className="border-b border-border align-top transition-colors last:border-0 hover:bg-muted/30"
                   >
-                    <td className="px-2 py-1.5 font-medium">{guest.lastName}</td>
-                    <td className="px-2 py-1.5">{guest.firstName}</td>
+                    <td className="px-2 py-1.5 font-medium">{group.lastName}</td>
+                    <td className="px-2 py-1.5">{group.firstName}</td>
                     <td className="max-w-[7rem] truncate px-2 py-1.5 text-muted-foreground">
-                      {guest.middleName?.trim() ?? '—'}
+                      {group.middleName || '—'}
                     </td>
-                    <td className="max-w-[8rem] truncate px-2 py-1.5 text-muted-foreground">
-                      {room?.name ?? guest.roomId}
-                    </td>
-                    <td className="whitespace-nowrap px-2 py-1.5 tabular-nums">
-                      {formatCheckInColumn(guest.startDate, guest.checkedInAt)}
-                    </td>
-                    <td className="whitespace-nowrap px-2 py-1.5 tabular-nums">
-                      {format(parseISO(guest.endDate), 'dd.MM.yyyy', { locale: ru })}
-                    </td>
-                    <td className="whitespace-nowrap px-2 py-1.5 tabular-nums text-muted-foreground">
-                      {formatActualCheckout(guest.checkedOutAt)}
+                    <td className="max-w-[10rem] truncate px-2 py-1.5 font-mono text-[11px] text-muted-foreground">
+                      {group.profileId || '—'}
                     </td>
                     <td className="px-2 py-1.5">
-                      {(() => {
-                        if (guestHasCheckedOut(guest)) {
-                          return (
-                            <span className="rounded-md border border-red-300 bg-red-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-red-900 dark:border-red-800 dark:bg-red-950/70 dark:text-red-100">
-                              Выехал
-                            </span>
-                          )
-                        }
-                        if (isGuestCheckInConfirmed(guest, bookings)) {
-                          return (
-                            <span className="rounded-md border border-emerald-300 bg-emerald-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-emerald-900 dark:border-emerald-800 dark:bg-emerald-950/70 dark:text-emerald-100">
-                              Заехал
-                            </span>
-                          )
-                        }
-                        return (
-                          <span className="rounded-md border border-amber-300 bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-950 dark:border-amber-800 dark:bg-amber-950/50 dark:text-amber-100">
-                            Не подтвержден
-                          </span>
-                        )
-                      })()}
+                      <div className="space-y-2">
+                        {group.visits.map((visit, visitIndex) => (
+                          <button
+                            key={`room-${visit.guest.id}`}
+                            type="button"
+                            className="block w-full rounded-md border border-border/60 bg-background/50 px-2 py-1 text-left text-muted-foreground hover:bg-muted/50"
+                            onClick={() => setDialogGuestId(visit.guest.id)}
+                            aria-label={`Карточка гостя: ${guestLabel}`}
+                          >
+                            <div className="truncate text-[10px] uppercase tracking-wide text-muted-foreground/80">
+                              Визит {visitIndex + 1}
+                            </div>
+                            <div className="truncate text-xs text-foreground">{visit.roomName}</div>
+                          </button>
+                        ))}
+                      </div>
                     </td>
+                    <td className="px-2 py-1.5 align-top text-muted-foreground">
+                      <div className="space-y-2">
+                        {group.visits.map((visit) => (
+                          <div key={`subs-${visit.guest.id}`} className="rounded-md border border-border/60 bg-background/50 px-2 py-1">
+                            {visit.subGuests.length === 0 ? (
+                              '—'
+                            ) : (
+                              <div className="space-y-0.5">
+                                {visit.subGuests.map((item) => {
+                                  const fullName = [item.lastName, item.firstName, item.middleName?.trim()]
+                                    .filter(Boolean)
+                                    .join(' ')
+                                  return (
+                                    <div key={item.id} className="truncate">
+                                      Гость {item.position}: {fullName || 'Без имени'}
+                                    </div>
+                                  )
+                                })}
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    </td>
+                    <td className="px-2 py-1.5 align-top tabular-nums">
+                      <div className="space-y-2">
+                        {group.visits.map((visit) => (
+                          <div key={`checkin-${visit.guest.id}`} className="whitespace-nowrap rounded-md border border-border/60 bg-background/50 px-2 py-1">
+                            {formatCheckInColumn(visit.guest.startDate, visit.guest.checkedInAt)}
+                          </div>
+                        ))}
+                      </div>
+                    </td>
+                    <td className="px-2 py-1.5 align-top tabular-nums">
+                      <div className="space-y-2">
+                        {group.visits.map((visit) => (
+                          <div key={`checkout-${visit.guest.id}`} className="whitespace-nowrap rounded-md border border-border/60 bg-background/50 px-2 py-1">
+                            {format(parseISO(visit.guest.endDate), 'dd.MM.yyyy', { locale: ru })}
+                          </div>
+                        ))}
+                      </div>
+                    </td>
+                    <td className="px-2 py-1.5 align-top tabular-nums text-muted-foreground">
+                      <div className="space-y-2">
+                        {group.visits.map((visit) => (
+                          <div key={`actual-${visit.guest.id}`} className="whitespace-nowrap rounded-md border border-border/60 bg-background/50 px-2 py-1">
+                            {formatActualCheckout(visit.guest.checkedOutAt)}
+                          </div>
+                        ))}
+                      </div>
+                    </td>
+                    <td className="px-2 py-1.5 align-top">
+                      <div className="space-y-2">
+                        {group.visits.map((visit) => (
+                          <div key={`status-${visit.guest.id}`} className="rounded-md border border-border/60 bg-background/50 px-2 py-1">
+                            {visit.status === 'checked_out' ? (
+                              <span className="rounded-md border border-red-300 bg-red-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-red-900 dark:border-red-800 dark:bg-red-950/70 dark:text-red-100">
+                                Выехал
+                              </span>
+                            ) : visit.status === 'checked_in' ? (
+                              <span className="rounded-md border border-emerald-300 bg-emerald-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-emerald-900 dark:border-emerald-800 dark:bg-emerald-950/70 dark:text-emerald-100">
+                                Заехал
+                              </span>
+                            ) : (
+                              <span className="rounded-md border border-amber-300 bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-950 dark:border-amber-800 dark:bg-amber-950/50 dark:text-amber-100">
+                                Не подтвержден
+                              </span>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    </td>
+                    {isAdmin ? (
+                      <td className="px-1 py-1.5 align-top">
+                        <div className="space-y-2">
+                          {group.visits.map((visit) => (
+                            <div
+                              key={`del-${visit.guest.id}`}
+                              className="flex justify-center rounded-md border border-border/60 bg-background/50 px-1 py-1"
+                            >
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                className="h-7 w-7 shrink-0 border-destructive/40 p-0 text-destructive hover:bg-destructive/10 hover:text-destructive"
+                                disabled={deletingGuestId === visit.guest.id}
+                                title="Удалить карточку гостя и связанные брони"
+                                onClick={() => void handleDeleteVisit(visit.guest.id, guestLabel)}
+                              >
+                                <Trash2 className="h-3.5 w-3.5" aria-hidden />
+                              </Button>
+                            </div>
+                          ))}
+                        </div>
+                      </td>
+                    ) : null}
                   </tr>
                 )
               })

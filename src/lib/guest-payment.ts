@@ -1,4 +1,9 @@
-import { type GuestPaymentMethod } from '@/types/models'
+import { type GuestPaymentMethod, type PaymentStatus } from '@/types/models'
+
+/** Подпись к статусу оплаты */
+export function paymentStatusLabel(status: PaymentStatus): string {
+  return status === 'paid' ? 'Оплачен' : 'Не оплачен'
+}
 
 /** Подписи к полю Guest.paymentMethod для интерфейса */
 export function guestPaymentLabel(method: GuestPaymentMethod): string {

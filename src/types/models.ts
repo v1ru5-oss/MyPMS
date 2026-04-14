@@ -4,6 +4,8 @@ export interface StickyNote {
   body: string
   roomId?: string | null
   guestId?: string | null
+  /** Конкретный проживающий из списка субгостей брони; при null — привязка только к карточке гостя. */
+  bookingSubGuestId?: string | null
   deadlineAt?: string | null
   createdByUserId?: string | null
   createdByName?: string | null
@@ -21,6 +23,7 @@ export interface StickyNote {
 
 /** Отметка уборки на странице «Уборка в номерах» */
 export type RoomCleaningStatus = 'clean' | 'dirty'
+export type DayOfWeek = 0 | 1 | 2 | 3 | 4 | 5 | 6
 
 export interface Room {
   id: string
@@ -38,12 +41,73 @@ export interface Room {
   cleaningUpdatedByDisplay?: string | null
 }
 
+export interface RoomCategory {
+  name: string
+  weekdayPrice: number
+  weekendPrice: number
+}
+
+export interface RoomDailyPrice {
+  roomId: string
+  dayOfWeek: DayOfWeek
+  price: number
+}
+
+export interface RoomSpecialPriceCondition {
+  id: string
+  roomId: string
+  title: string
+  startAt: string
+  endAt: string
+  prices: Record<DayOfWeek, number>
+}
+
+export interface RoomClosure {
+  id: string
+  roomId: string
+  startAt: string
+  endAt: string
+  reason: string
+  createdByUserId?: string | null
+  createdByName?: string | null
+  repairCompletedAt?: string | null
+  resolvedIssues?: string | null
+  repairedByUserId?: string | null
+  repairedByName?: string | null
+  checkedAt?: string | null
+  checkedByUserId?: string | null
+  checkedByName?: string | null
+  checkedByRole?: string | null
+  checkedComment?: string | null
+  /** Назначенный на ремонт (профиль с ролью technician) */
+  assignedTechnicianUserId?: string | null
+  assignedTechnicianName?: string | null
+}
+
+export interface AdditionalService {
+  id: string
+  name: string
+  price: number
+}
+
+export interface BookingAdditionalService {
+  bookingId: string
+  serviceId: string
+  serviceName: string
+  quantity: number
+  unitPrice: number
+}
+
 export interface Booking {
   id: string
   roomId: string
   guestName: string
   startDate: string
   endDate: string
+  /** Оплачена ли бронь (дублирует логику гостя при связке guest_id) */
+  paymentStatus: PaymentStatus
+  /** Зафиксированная стоимость проживания на момент создания брони */
+  totalPrice?: number | null
   /** Время заезда в день startDate (HH:mm, локально); без поля — с полуночи */
   checkInTime?: string | null
   /** Время выезда в день endDate (HH:mm); без поля — до конца дня выезда */
@@ -53,6 +117,34 @@ export interface Booking {
   guestId?: string
   /** Источник брони (booking_sources.id) */
   bookingSourceId?: number | null
+  /** Общее число проживающих (включая основного гостя) */
+  guestsCount?: number | null
+  /** Число детей среди проживающих */
+  childrenCount?: number | null
+}
+
+export interface BookingSubGuest {
+  id: string
+  bookingId: string
+  /** Порядковый номер в карточке брони, начиная с 1 (основной гость — №1) */
+  position: number
+  lastName: string
+  firstName: string
+  middleName?: string | null
+  passportData?: string | null
+  isChild: boolean
+  age?: number | null
+  birthCertificate?: string | null
+}
+
+export interface GuestProfile {
+  id: string
+  firstName: string
+  lastName: string
+  middleName?: string | null
+  citizenshipId?: number | null
+  phone?: string | null
+  email?: string | null
 }
 
 /** Строка справочника гражданств (таблица citizenships). */
@@ -70,8 +162,11 @@ export interface BookingSource {
 /** Способ оплаты в карточке гостя (таблица Guest) */
 export type GuestPaymentMethod = 'cash' | 'transfer' | 'unpaid'
 
+/** Статус оплаты брони и карточки гостя: не оплачен / оплачен */
+export type PaymentStatus = 'unpaid' | 'paid'
+
 /** Роль в профиле: админ, консьерж (брони/гости), уборщица (номера). Устаревшее staff в БД приводится к concierge. */
-export type UserRole = 'admin' | 'concierge' | 'housekeeper'
+export type UserRole = 'admin' | 'concierge' | 'housekeeper' | 'technician' | 'senior_technician'
 
 /** Профиль пользователя (Supabase Auth + таблица profiles) */
 export interface PublicUser {
@@ -87,6 +182,8 @@ export interface PublicUser {
 
 export interface Guest {
   id: string
+  /** Устойчивый ID профиля гостя (человек), визиты хранятся отдельно. */
+  profileId?: string | null
   firstName: string
   lastName: string
   /** Отчество */
@@ -102,7 +199,9 @@ export interface Guest {
   endDate: string
   /** Дата и время создания карточки (ISO 8601) */
   createdAt: string
-  /** Форма оплаты */
+  /** Статус оплаты (согласован с бронью при наличии guest_id) */
+  paymentStatus: PaymentStatus
+  /** Форма оплаты: при оплате — наличные или безнал; при неоплате — unpaid */
   paymentMethod: GuestPaymentMethod
   /** Подтверждение заезда (как в БД: столбец approve) */
   aprove?: boolean

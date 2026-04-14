@@ -75,8 +75,14 @@ function roomRow(r) {
   }
 }
 
+function inferPaymentStatus(method) {
+  const m = method ?? 'unpaid'
+  return m === 'unpaid' ? 'unpaid' : 'paid'
+}
+
 function guestRow(g) {
   const today = new Date().toISOString().slice(0, 10)
+  const paymentMethod = g.paymentMethod ?? g.payment_method ?? 'unpaid'
   return {
     id: g.id,
     first_name: g.firstName ?? g.first_name,
@@ -85,7 +91,8 @@ function guestRow(g) {
     start_date: (g.startDate ?? g.start_date ?? today).slice(0, 10),
     end_date: (g.endDate ?? g.end_date ?? today).slice(0, 10),
     created_at: g.createdAt ?? g.created_at ?? `${(g.startDate ?? today).slice(0, 10)}T00:00:00.000Z`,
-    payment_method: g.paymentMethod ?? g.payment_method ?? 'unpaid',
+    payment_status: g.paymentStatus ?? g.payment_status ?? inferPaymentStatus(paymentMethod),
+    payment_method: paymentMethod,
     approve: g.aprove ?? g.approve ?? false,
   }
 }
@@ -99,6 +106,7 @@ function bookingRow(b) {
     end_date: (b.endDate ?? b.end_date).slice(0, 10),
     note: b.note ?? null,
     guest_id: b.guestId ?? b.guest_id ?? null,
+    payment_status: b.paymentStatus ?? b.payment_status ?? 'unpaid',
   }
 }
 

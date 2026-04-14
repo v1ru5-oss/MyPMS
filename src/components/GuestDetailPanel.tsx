@@ -3,17 +3,26 @@ import { ru } from 'date-fns/locale'
 import { useEffect, useState } from 'react'
 
 import { Button } from '@/components/ui/button'
+import { Label } from '@/components/ui/label'
 import { formatCheckInTimeShort, formatCheckOutTimeShort } from '@/lib/booking-check-in-time'
 import { formatGuestFullName } from '@/lib/guest-name'
-import { guestPaymentLabel } from '@/lib/guest-payment'
+import { guestPaymentLabel, paymentStatusLabel } from '@/lib/guest-payment'
 import {
   fetchBookingByGuestId,
   fetchBookingSources,
   fetchCitizenships,
   fetchGuestById,
   fetchRooms,
+  patchGuestAndLinkedBookingsPayment,
 } from '@/lib/pms-db'
-import { type Booking, type BookingSource, type Citizenship, type Guest, type Room } from '@/types/models'
+import {
+  type Booking,
+  type BookingSource,
+  type Citizenship,
+  type Guest,
+  type PaymentStatus,
+  type Room,
+} from '@/types/models'
 
 export type GuestDetailPanelLayout = 'page' | 'embedded'
 
@@ -36,6 +45,10 @@ export function GuestDetailPanel({
   const [bookingSources, setBookingSources] = useState<BookingSource[]>([])
   const [loadError, setLoadError] = useState('')
   const [loading, setLoading] = useState(false)
+  const [paymentSaving, setPaymentSaving] = useState(false)
+  const [paymentSaveError, setPaymentSaveError] = useState('')
+  const [localPaymentStatus, setLocalPaymentStatus] = useState<PaymentStatus>('unpaid')
+  const [localPaymentChannel, setLocalPaymentChannel] = useState<'cash' | 'transfer'>('cash')
 
   useEffect(() => {
     let cancelled = false
@@ -64,6 +77,10 @@ export function GuestDetailPanel({
           setLinkedBooking(booking)
           setCitizenships(cit)
           setBookingSources(src)
+          if (g) {
+            setLocalPaymentStatus(g.paymentStatus)
+            setLocalPaymentChannel(g.paymentMethod === 'transfer' ? 'transfer' : 'cash')
+          }
         }
       } catch (e) {
         if (!cancelled) {
@@ -200,6 +217,12 @@ export function GuestDetailPanel({
       ) : null}
       <div>
         <h3 className="mb-2 text-sm font-medium text-muted-foreground">Проживание</h3>
+        {linkedBooking ? (
+          <p className="mb-2 text-sm">
+            <span className="font-medium">ID брони:</span>{' '}
+            <span className="font-mono text-xs text-muted-foreground">{linkedBooking.id}</span>
+          </p>
+        ) : null}
         <p className="text-sm">
           <span className="font-medium">Заезд:</span>{' '}
           {format(parseISO(guest.startDate), 'dd.MM.yyyy', { locale: ru })}
@@ -240,7 +263,87 @@ export function GuestDetailPanel({
 
       <div>
         <h3 className="mb-2 text-sm font-medium text-muted-foreground">Оплата</h3>
-        <p className="text-sm">{guestPaymentLabel(guest.paymentMethod)}</p>
+        <p className="text-sm">
+          <span className="font-medium">{paymentStatusLabel(guest.paymentStatus)}</span>
+          {guest.paymentStatus === 'paid' ? (
+            <span className="text-muted-foreground"> · {guestPaymentLabel(guest.paymentMethod)}</span>
+          ) : null}
+        </p>
+        {linkedBooking ? (
+          <p className="mt-1 text-xs text-muted-foreground">
+            Бронь: {paymentStatusLabel(linkedBooking.paymentStatus)}
+            {linkedBooking.paymentStatus !== guest.paymentStatus ? (
+              <span className="text-amber-700 dark:text-amber-300"> (рассинхрон — сохраните ниже)</span>
+            ) : null}
+          </p>
+        ) : null}
+        <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-end">
+          <div className="grid min-w-[10rem] flex-1 gap-1">
+            <Label htmlFor="guestPayStatus">Статус оплаты</Label>
+            <select
+              id="guestPayStatus"
+              className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm"
+              value={localPaymentStatus}
+              onChange={(e) => setLocalPaymentStatus(e.target.value as PaymentStatus)}
+              disabled={paymentSaving}
+            >
+              <option value="unpaid">Не оплачен</option>
+              <option value="paid">Оплачен</option>
+            </select>
+          </div>
+          {localPaymentStatus === 'paid' ? (
+            <div className="grid min-w-[10rem] flex-1 gap-1">
+              <Label htmlFor="guestPayChannel">Способ</Label>
+              <select
+                id="guestPayChannel"
+                className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm"
+                value={localPaymentChannel}
+                onChange={(e) => setLocalPaymentChannel(e.target.value as 'cash' | 'transfer')}
+                disabled={paymentSaving}
+              >
+                <option value="cash">Наличные</option>
+                <option value="transfer">Безналичные</option>
+              </select>
+            </div>
+          ) : null}
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            disabled={paymentSaving || !guestId?.trim()}
+            onClick={() => {
+              if (!guestId?.trim()) return
+              void (async () => {
+                setPaymentSaving(true)
+                setPaymentSaveError('')
+                try {
+                  await patchGuestAndLinkedBookingsPayment(
+                    guestId,
+                    localPaymentStatus,
+                    localPaymentChannel,
+                  )
+                  const [nextGuest, nextBooking] = await Promise.all([
+                    fetchGuestById(guestId),
+                    fetchBookingByGuestId(guestId),
+                  ])
+                  if (nextGuest) {
+                    setGuest(nextGuest)
+                    setLocalPaymentStatus(nextGuest.paymentStatus)
+                    setLocalPaymentChannel(nextGuest.paymentMethod === 'transfer' ? 'transfer' : 'cash')
+                  }
+                  setLinkedBooking(nextBooking ?? null)
+                } catch (e) {
+                  setPaymentSaveError(e instanceof Error ? e.message : 'Не удалось сохранить оплату.')
+                } finally {
+                  setPaymentSaving(false)
+                }
+              })()
+            }}
+          >
+            {paymentSaving ? 'Сохранение…' : 'Сохранить оплату'}
+          </Button>
+        </div>
+        {paymentSaveError ? <p className="mt-2 text-sm text-red-600">{paymentSaveError}</p> : null}
       </div>
 
       <div>

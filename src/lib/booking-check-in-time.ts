@@ -39,12 +39,12 @@ export function checkInTimeForTimeInput(time?: string | null): string {
 }
 
 /**
- * Доля суток на дате выезда, где заканчивается полоса: 1 — конец колонки дня (как без времени).
- * null / 00:00 в БД не хранятся — здесь трактуем только явное время.
+ * Доля суток на дате выезда, где заканчивается полоса.
+ * По бизнес-правилу: если время выезда не указано, считаем выезд в 12:00.
  */
 export function checkOutTimeToEndFraction(time?: string | null): number {
   const n = normalizeCheckInTime(time)
-  if (!n || n === '00:00') return 1
+  if (!n || n === '00:00') return 12 / 24
   const [hs, ms] = n.split(':')
   const h = parseInt(hs!, 10)
   const m = parseInt(ms!, 10)
@@ -53,22 +53,24 @@ export function checkOutTimeToEndFraction(time?: string | null): number {
   return Math.min(1 - 1e-6, Math.max(0, frac))
 }
 
-/** Подпись времени выезда; пусто, если до конца дня выезда (без отдельного времени). */
+/** Подпись времени выезда; без времени показываем 12:00 по умолчанию. */
 export function formatCheckOutTimeShort(time?: string | null): string {
   const n = normalizeCheckInTime(time)
-  if (!n || n === '00:00') return ''
+  if (!n || n === '00:00') return '12:00'
   return n
 }
 
-/** Значение для input type="time" (без времени выезда → 00:00 = до конца дня в БД). */
+/** Значение для input type="time" (без времени выезда → 12:00). */
 export function checkOutTimeForTimeInput(time?: string | null): string {
-  return normalizeCheckInTime(time) ?? '00:00'
+  const n = normalizeCheckInTime(time)
+  if (!n || n === '00:00') return '12:00'
+  return n
 }
 
-/** Строка для колонки time в Postgres; 00:00 и пусто — null (до конца дня выезда). */
+/** Строка для колонки time в Postgres; 12:00 и пусто — null (значение по умолчанию). */
 export function checkOutTimeToDb(time?: string | null): string | null {
   const n = normalizeCheckInTime(time)
-  if (!n || n === '00:00') return null
+  if (!n || n === '00:00' || n === '12:00') return null
   return `${n}:00`
 }
 

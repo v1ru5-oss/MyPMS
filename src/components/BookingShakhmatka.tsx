@@ -24,14 +24,13 @@ import {
   formatCheckInTimeShort,
   formatCheckOutTimeShort,
 } from '@/lib/booking-check-in-time'
-import { isBookingGuestCheckInApproved } from '@/lib/guest-checkin'
 import {
   checkInUrgentWithinTwoHours,
   findNextCheckInForRoom,
   formatNextCheckInHoverTitle,
 } from '@/lib/next-room-checkin'
 import { cn } from '@/lib/utils'
-import { type Booking, type Guest, type Room } from '@/types/models'
+import { type Booking, type Room, type RoomClosure } from '@/types/models'
 
 function roomCleaningToggleTitle(status: Room['cleaningStatus']): string {
   if (status === 'clean') return 'Убрано — клик: не убрано'
@@ -79,6 +78,26 @@ function dayKey(d: Date): string {
   return format(d, 'yyyy-MM-dd')
 }
 
+function getClosureSegmentForDay(
+  closure: RoomClosure,
+  day: Date,
+): { startPercent: number; endPercent: number } | null {
+  const dayStart = startOfDay(day)
+  const dayEnd = addDays(dayStart, 1)
+  const closureStart = parseISO(closure.startAt)
+  const closureEnd = parseISO(closure.endAt)
+  if (Number.isNaN(closureStart.getTime()) || Number.isNaN(closureEnd.getTime())) return null
+
+  const overlapStart = closureStart > dayStart ? closureStart : dayStart
+  const overlapEnd = closureEnd < dayEnd ? closureEnd : dayEnd
+  if (overlapEnd <= overlapStart) return null
+
+  const dayMs = dayEnd.getTime() - dayStart.getTime()
+  const startPercent = ((overlapStart.getTime() - dayStart.getTime()) / dayMs) * 100
+  const endPercent = ((overlapEnd.getTime() - dayStart.getTime()) / dayMs) * 100
+  return { startPercent, endPercent }
+}
+
 /** Доля прошедшего времени в локальных сутках [0, 1] — для метки «сейчас» в колонке дня. */
 function fractionOfLocalDay(now: Date): number {
   const sod = startOfDay(now)
@@ -104,8 +123,7 @@ function freeCountForCategory(
 type Props = {
   rooms: Room[]
   bookings: Booking[]
-  /** Таблица Guest (подтверждение заезда aprove и связь с бронью по guestId) */
-  guests: Guest[]
+  roomClosures?: RoomClosure[]
   /** Клик по дате или выделение диапазона в строке номера — открыть форму новой брони */
   onNewBookingRequest?: (params: { roomId: string; startDate: string; endDate: string }) => void
   /** Перенос / изменение дат существующей брони; вернуть false, если пересечение с другой бронью */
@@ -121,6 +139,8 @@ type Props = {
   roomCleaningSavingRoomId?: string | null
   /** Гости, к которым привязаны заметки — на полосе брони показывается «!» */
   guestIdsWithStickyNotes?: ReadonlySet<string>
+  /** Клик по периоду закрытия номера (красная ячейка) — открыть редактирование закрытия */
+  onRoomClosureClick?: (closure: RoomClosure) => void
 }
 
 type DragRef = { roomId: string; anchor: number; end: number }
@@ -155,13 +175,14 @@ type BookingDragSession =
 export function BookingShakhmatka({
   rooms,
   bookings,
-  guests,
+  roomClosures = [],
   onNewBookingRequest,
   onBookingDatesChange,
   onBookingEditClick,
   onRoomCleaningStatusClick,
   roomCleaningSavingRoomId = null,
   guestIdsWithStickyNotes,
+  onRoomClosureClick,
 }: Props) {
   /** Любой день просматриваемого месяца (для поля даты и «Сегодня»); сетка строится от начала этого месяца */
   const [viewAnchor, setViewAnchor] = useState(() => new Date())
@@ -276,6 +297,15 @@ export function BookingShakhmatka({
       : null
 
   const categories = useMemo(() => groupRoomsByCategory(rooms), [rooms])
+  const roomClosuresByRoomId = useMemo(() => {
+    const map = new Map<string, RoomClosure[]>()
+    roomClosures.forEach((item) => {
+      const list = map.get(item.roomId) ?? []
+      list.push(item)
+      map.set(item.roomId, list)
+    })
+    return map
+  }, [roomClosures])
 
   const dayIndex = (key: string) => days.findIndex((d) => dayKey(d) === key)
 
@@ -915,6 +945,11 @@ export function BookingShakhmatka({
                           {days.map((d, dayIdx) => {
                             const weekend = isSaturday(d) || isSunday(d)
                             const padCol = !isSameMonth(d, viewMonth)
+                            const closureWithSegment = (roomClosuresByRoomId.get(room.id) ?? [])
+                              .map((item) => ({ item, segment: getClosureSegmentForDay(item, d) }))
+                              .find((x) => x.segment !== null)
+                            const closure = closureWithSegment?.item
+                            const closureSegment = closureWithSegment?.segment ?? null
                             const inRange =
                               rangePreview &&
                               rangePreview.roomId === room.id &&
@@ -944,7 +979,35 @@ export function BookingShakhmatka({
                                     ? () => handleCellPointerEnter(room.id, dayIdx)
                                     : undefined
                                 }
-                              />
+                              >
+                                {closureSegment ? (
+                                  <div
+                                    className="absolute inset-y-0 cursor-pointer bg-red-200/80 dark:bg-red-900/55"
+                                    style={{
+                                      left: `${closureSegment.startPercent}%`,
+                                      width: `${Math.max(
+                                        2,
+                                        closureSegment.endPercent - closureSegment.startPercent,
+                                      )}%`,
+                                    }}
+                                    title={
+                                      closure
+                                        ? [
+                                            `Закрыто: ${closure.reason}`,
+                                            `Период: ${format(parseISO(closure.startAt), 'dd.MM.yyyy HH:mm')} - ${format(parseISO(closure.endAt), 'dd.MM.yyyy HH:mm')}`,
+                                            `Создал: ${closure.createdByName ?? 'неизвестно'}`,
+                                          ].join('\n')
+                                        : undefined
+                                    }
+                                    onPointerDown={(e) => {
+                                      if (!closure) return
+                                      e.preventDefault()
+                                      e.stopPropagation()
+                                      onRoomClosureClick?.(closure)
+                                    }}
+                                  />
+                                ) : null}
+                              </div>
                             )
                           })}
                           {/* Полосы броней */}
@@ -974,30 +1037,33 @@ export function BookingShakhmatka({
                             const outT = formatCheckOutTimeShort(display.checkOutTime)
                             const timeShort =
                               inT && outT ? `${inT} → ${outT}` : inT || (outT ? `до ${outT}` : '')
-                            const titleStr = `${display.guestName} · ${display.startDate}${inT ? ` ${inT}` : ''} — ${display.endDate}${outT ? ` ${outT}` : ''}`
-                            const approved = isBookingGuestCheckInApproved(display, guests)
+                            const isPaid = display.paymentStatus === 'paid'
+                            const titleStr = `${display.guestName} · ${display.startDate}${inT ? ` ${inT}` : ''} — ${display.endDate}${outT ? ` ${outT}` : ''} · ${isPaid ? 'Оплачен' : 'Не оплачен'}`
                             const hasStickyNote =
                               Boolean(display.guestId) &&
                               guestIdsWithStickyNotes?.has(display.guestId!) === true
-                            const approvedStyle = approved
-                              ? ({ backgroundColor: '#006400', color: '#fff' } as const)
-                              : undefined
-                            const handleBg = approved ? 'bg-white/20 hover:bg-white/30' : 'bg-black/15 hover:bg-black/25'
+                            /** Жёлтый — не оплачен, зелёный — оплачен */
+                            const paymentBarStyle = isPaid
+                              ? ({ backgroundColor: '#15803d', color: '#fff' } as const)
+                              : ({ backgroundColor: '#facc15', color: '#422006' } as const)
+                            const handleBg = isPaid ? 'bg-white/20 hover:bg-white/30' : 'bg-black/25 hover:bg-black/35'
 
                             if (!onBookingDatesChange) {
                               return (
                                 <div
                                   key={b.id}
-                                  className={cn(
-                                    'pointer-events-none absolute top-1/2 z-[1] flex h-6 -translate-y-1/2 items-center overflow-hidden rounded px-1 text-[10px] font-medium shadow-sm',
-                                    approved ? 'text-white' : 'bg-primary/85 text-primary-foreground',
-                                  )}
-                                  style={{ left, width: wPx, ...approvedStyle }}
+                                  className="pointer-events-none absolute top-1/2 z-[1] flex h-6 -translate-y-1/2 items-center overflow-hidden rounded px-1 text-[10px] font-medium shadow-sm"
+                                  style={{ left, width: wPx, ...paymentBarStyle }}
                                   title={titleStr}
                                 >
                                   {hasStickyNote ? (
                                     <span
-                                      className="mr-0.5 shrink-0 rounded-sm bg-amber-400 px-0.5 text-[9px] font-bold leading-none text-amber-950 shadow-sm dark:bg-amber-500 dark:text-amber-950"
+                                      className={cn(
+                                        'mr-0.5 shrink-0 rounded-sm px-0.5 text-[9px] font-bold leading-none shadow-sm',
+                                        isPaid
+                                          ? 'bg-amber-300 text-amber-950 ring-1 ring-white/40'
+                                          : 'bg-white/90 text-amber-900 ring-1 ring-amber-800/40',
+                                      )}
                                       title="Есть заметка"
                                     >
                                       !
@@ -1016,12 +1082,8 @@ export function BookingShakhmatka({
                             return (
                               <div
                                 key={b.id}
-                                className={cn(
-                                  'absolute top-1/2 z-[2] flex h-6 -translate-y-1/2 overflow-hidden rounded text-[10px] font-medium shadow-sm',
-                                  !approved && 'bg-primary/85 text-primary-foreground',
-                                  approved && 'text-white',
-                                )}
-                                style={{ left, width: wPx, ...approvedStyle }}
+                                className="absolute top-1/2 z-[2] flex h-6 -translate-y-1/2 overflow-hidden rounded text-[10px] font-medium shadow-sm"
+                                style={{ left, width: wPx, ...paymentBarStyle }}
                                 title={titleStr}
                               >
                                 <button
@@ -1048,7 +1110,12 @@ export function BookingShakhmatka({
                                 >
                                   {hasStickyNote ? (
                                     <span
-                                      className="mr-0.5 shrink-0 rounded-sm bg-amber-400 px-0.5 text-[9px] font-bold leading-none text-amber-950 shadow-sm dark:bg-amber-500 dark:text-amber-950"
+                                      className={cn(
+                                        'mr-0.5 shrink-0 rounded-sm px-0.5 text-[9px] font-bold leading-none shadow-sm',
+                                        isPaid
+                                          ? 'bg-amber-300 text-amber-950 ring-1 ring-white/40'
+                                          : 'bg-white/90 text-amber-900 ring-1 ring-amber-800/40',
+                                      )}
                                       title="Есть заметка"
                                     >
                                       !
